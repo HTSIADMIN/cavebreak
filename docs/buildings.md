@@ -69,3 +69,4 @@ Each tier of unit comes from a dedicated production building. SC2 Terran templat
   - Powered buildings must be placed inside a Pylon field — validated by `canPlaceBuilding` (`world.ts`).
   - **Construction is Protoss-style**: a worker walks to the site and initiates the warp-in (`started`), then the building self-completes over its build time (`buildProgress`) while the worker frees up. Can't-reach cancels and refunds.
   - Deferred: tech/upgrade building, add-ons, gas Extractor as a separate structure (gas is currently harvested directly from a geyser — see [mining.md](./mining.md)).
+- **2026-05-28 (update)** — Added **Cybernetics Core** (requires Gateway; unlocks the Stalker) and **Forge** (researches Ground Weapons/Armor) — both 2×2 and require power. The **Nexus is now buildable** by workers (expansion). All structures have plasma shields. Still deferred: gas Extractor structure, add-ons.

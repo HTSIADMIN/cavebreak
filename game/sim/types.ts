@@ -21,6 +21,11 @@ export interface Grid {
 
 export type PlayerId = number;
 
+export interface PlayerUpgrades {
+  groundWeapons: number; // 0..3
+  groundArmor: number; // 0..3
+}
+
 export interface Player {
   id: PlayerId;
   color: string;
@@ -30,6 +35,7 @@ export interface Player {
   supplyUsed: number;
   supplyMax: number;
   defeated: boolean;
+  upgrades: PlayerUpgrades;
 }
 
 export type ResourceKind = "mineral" | "gas";
@@ -37,12 +43,14 @@ export type ResourceKind = "mineral" | "gas";
 export interface Deposit {
   id: number;
   kind: ResourceKind;
-  tx: number; // tile coords (integer)
+  tx: number;
   ty: number;
   remaining: number;
 }
 
-// Protoss-style roster (docs/units.md). Internal type keys; UI labels live in the view.
+// Combat attributes drive bonus-damage counters (docs/combat.md).
+export type Attribute = "light" | "armored" | "biological" | "mechanical";
+
 export type UnitType = "worker" | "zealot" | "stalker";
 
 export type UnitState =
@@ -59,61 +67,69 @@ export interface Unit {
   id: number;
   owner: PlayerId;
   type: UnitType;
-  x: number; // continuous position in tile units (tile center = integer + 0.5)
+  x: number;
   y: number;
   hp: number;
   maxHp: number;
+  shields: number;
+  maxShields: number;
+  shieldRegenCd: number; // seconds until shields start regenerating again
   state: UnitState;
 
-  // movement
-  path: Vec2[] | null; // remaining waypoints, tile centers
+  path: Vec2[] | null;
   moveGoal: Vec2 | null;
 
-  // wall mining
   mineTile: Vec2 | null;
   mineProgress: number;
 
-  // resource harvesting
   depositId: number | null;
   carrying: { kind: ResourceKind; amount: number } | null;
   gatherProgress: number;
 
-  // construction (worker initiates a building's warp-in)
   buildTargetId: number | null;
 
-  // combat
-  targetId: number | null; // unit or building being attacked
-  attackGoal: Vec2 | null; // attack-move destination
-  attackCd: number; // seconds until next attack is ready
-  repathCd: number; // throttles A* recompute while chasing a moving target
+  targetId: number | null;
+  attackGoal: Vec2 | null;
+  attackCd: number;
+  repathCd: number;
 }
 
-export type BuildingType = "nexus" | "pylon" | "gateway" | "cannon";
+export type BuildingType = "nexus" | "pylon" | "gateway" | "cybernetics" | "forge" | "cannon";
 
 export interface ProductionItem {
   unitType: UnitType;
+}
+
+export type UpgradeKind = "weapon" | "armor";
+
+export interface ResearchItem {
+  kind: UpgradeKind;
 }
 
 export interface Building {
   id: number;
   owner: PlayerId;
   type: BuildingType;
-  tx: number; // top-left tile of footprint
+  tx: number;
   ty: number;
   w: number;
   h: number;
   hp: number;
   maxHp: number;
+  shields: number;
+  maxShields: number;
+  shieldRegenCd: number;
   built: boolean;
-  started: boolean; // a worker has initiated the warp-in; it self-completes after
-  buildProgress: number; // seconds of warp-in accumulated
+  started: boolean;
+  buildProgress: number;
 
-  // production
   queue: ProductionItem[];
   produceProgress: number;
   rally: Vec2 | null;
 
-  // static defense (cannon)
+  researchQueue: ResearchItem[];
+  researchProgress: number;
+
   targetId: number | null;
   attackCd: number;
 }
@@ -128,11 +144,9 @@ export interface GameState {
   nextId: number;
   winner: PlayerId | null;
   // Local player's (player 0) visibility for rendering: 0 hidden, 1 explored, 2 visible.
-  // Single-player shortcut; becomes per-player server state under multiplayer.
   visibility: Uint8Array;
 }
 
-// Player intents. Clients emit these; the (local or remote) sim applies them.
 export type Command =
   | { type: "move"; unitIds: number[]; tx: number; ty: number }
   | { type: "attackMove"; unitIds: number[]; tx: number; ty: number }
@@ -142,4 +156,5 @@ export type Command =
   | { type: "stop"; unitIds: number[] }
   | { type: "build"; unitIds: number[]; buildingType: BuildingType; tx: number; ty: number }
   | { type: "train"; buildingId: number; unitType: UnitType }
+  | { type: "research"; buildingId: number; kind: UpgradeKind }
   | { type: "setRally"; buildingId: number; tx: number; ty: number };

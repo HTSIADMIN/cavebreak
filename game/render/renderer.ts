@@ -123,8 +123,9 @@ export function renderGame(
     }
     if (!b.built) {
       drawBar(ctx, sx + 2, sy + bh - 4, bw - 4, b.buildProgress / BUILDING_STATS[b.type].buildTime, "#ffd24a");
-    } else if (b.hp < b.maxHp) {
+    } else if (b.hp < b.maxHp || b.shields < b.maxShields) {
       drawBar(ctx, sx + 2, sy - 4, bw - 4, b.hp / b.maxHp, "#5ad15a");
+      if (b.maxShields > 0) drawBar(ctx, sx + 2, sy - 8, bw - 4, b.shields / b.maxShields, "#6bc5ff");
     }
     if (b.queue.length > 0) {
       ctx.fillStyle = "rgba(255,255,255,0.85)";
@@ -167,8 +168,9 @@ export function renderGame(
       ctx.arc(cx, cy - r - 2, r * 0.4, 0, Math.PI * 2);
       ctx.fill();
     }
-    if (u.hp < u.maxHp) {
+    if (u.hp < u.maxHp || u.shields < u.maxShields) {
       drawBar(ctx, cx - r, cy - r - 6, r * 2, u.hp / u.maxHp, "#5ad15a");
+      if (u.maxShields > 0) drawBar(ctx, cx - r, cy - r - 10, r * 2, u.shields / u.maxShields, "#6bc5ff");
     }
   }
 

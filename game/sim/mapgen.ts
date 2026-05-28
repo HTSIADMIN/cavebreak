@@ -112,12 +112,17 @@ export function createInitialState(seed = 1337): GameState {
       h: ns.h,
       hp: ns.hp,
       maxHp: ns.hp,
+      shields: ns.shields,
+      maxShields: ns.shields,
+      shieldRegenCd: 0,
       built: true,
       started: true,
       buildProgress: ns.buildTime,
       queue: [],
       produceProgress: 0,
       rally: null,
+      researchQueue: [],
+      researchProgress: 0,
       targetId: null,
       attackCd: 0,
     });
@@ -133,6 +138,9 @@ export function createInitialState(seed = 1337): GameState {
         y: w.y + 0.5,
         hp: ws.hp,
         maxHp: ws.hp,
+        shields: ws.shields,
+        maxShields: ws.shields,
+        shieldRegenCd: 0,
         state: "harvesting", // auto-assigns to the nearest mineral patch on the first tick
         path: null,
         moveGoal: null,
@@ -158,6 +166,7 @@ export function createInitialState(seed = 1337): GameState {
       supplyUsed: plan.workers.length,
       supplyMax: ns.supply,
       defeated: false,
+      upgrades: { groundWeapons: 0, groundArmor: 0 },
     });
   });
 

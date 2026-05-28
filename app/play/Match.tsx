@@ -18,6 +18,8 @@ import {
   TileType,
   UNIT_STATS,
   UnitType,
+  UPGRADES,
+  UpgradeKind,
 } from "@/game/sim";
 import { Camera } from "@/game/render/camera";
 import { renderGame, renderMinimap, RenderView } from "@/game/render/renderer";
@@ -42,6 +44,7 @@ function computeSelection(s: GameState, sel: Set<number>): {
   title: string; sub?: string; hint?: string; actions: HudAction[];
 } {
   const p = s.players[LOCAL_PLAYER];
+  const has = (t: BuildingType) => s.buildings.some((bb) => bb.owner === LOCAL_PLAYER && bb.type === t && bb.built);
   const units = s.units.filter((u) => sel.has(u.id) && u.owner === LOCAL_PLAYER);
   if (units.length > 0) {
     const workers = units.filter((u) => u.type === "worker");
@@ -52,15 +55,25 @@ function computeSelection(s: GameState, sel: Set<number>): {
         : `${units.length} ${sameType ? UNIT_STATS[units[0].type].label + "s" : "Units"}`;
     const actions: HudAction[] = [];
     if (workers.length > 0) {
-      const ps = BUILDING_STATS.pylon, gs = BUILDING_STATS.gateway, cs = BUILDING_STATS.cannon;
-      actions.push({ id: "build:pylon", key: "E", label: "Pylon", cost: costStr(ps.minerals, ps.gas), disabled: p.minerals < ps.minerals });
-      actions.push({ id: "build:gateway", key: "R", label: "Gateway", cost: costStr(gs.minerals, gs.gas), disabled: p.minerals < gs.minerals });
-      actions.push({ id: "build:cannon", key: "T", label: "Cannon", cost: costStr(cs.minerals, cs.gas), disabled: p.minerals < cs.minerals });
+      const opt = (id: string, key: string, type: BuildingType, extraDisabled = false) => {
+        const st = BUILDING_STATS[type];
+        actions.push({
+          id, key, label: st.label,
+          cost: costStr(st.minerals, st.gas),
+          disabled: p.minerals < st.minerals || p.gas < st.gas || extraDisabled,
+        });
+      };
+      opt("build:nexus", "N", "nexus");
+      opt("build:pylon", "E", "pylon");
+      opt("build:gateway", "R", "gateway");
+      opt("build:cybernetics", "C", "cybernetics", !has("gateway"));
+      opt("build:forge", "F", "forge");
+      opt("build:cannon", "T", "cannon");
     }
     actions.push({ id: "stop", key: "S", label: "Stop" });
     const hint =
       workers.length > 0
-        ? "Right-click: rock = mine · mineral = gather · floor = move. A = attack-move."
+        ? "Right-click: rock = mine · mineral/gas = gather · floor = move. A = attack-move."
         : "A = attack-move · right-click an enemy to attack.";
     return { title, sub: units.length === 1 ? stateLabel(units[0].state) : undefined, hint, actions };
   }
@@ -77,9 +90,22 @@ function computeSelection(s: GameState, sel: Set<number>): {
         sub = `Queue: ${b.queue.length} · supply +${st.supply}`;
       } else if (b.type === "gateway") {
         const z = UNIT_STATS.zealot, k = UNIT_STATS.stalker;
+        const cyber = has("cybernetics");
         actions.push({ id: "train:zealot", key: "Q", label: "Zealot", cost: costStr(z.minerals, z.gas), disabled: p.minerals < z.minerals || p.supplyUsed + z.supply > p.supplyMax });
-        actions.push({ id: "train:stalker", key: "W", label: "Stalker", cost: costStr(k.minerals, k.gas), disabled: p.minerals < k.minerals || p.gas < k.gas || p.supplyUsed + k.supply > p.supplyMax });
-        sub = `Queue: ${b.queue.length}`;
+        actions.push({ id: "train:stalker", key: "W", label: "Stalker", cost: costStr(k.minerals, k.gas), disabled: !cyber || p.minerals < k.minerals || p.gas < k.gas || p.supplyUsed + k.supply > p.supplyMax });
+        sub = cyber ? `Queue: ${b.queue.length}` : "Stalker needs a Cybernetics Core";
+      } else if (b.type === "forge") {
+        const wl = p.upgrades.groundWeapons;
+        const al = p.upgrades.groundArmor;
+        const wResearching = b.researchQueue.some((r) => r.kind === "weapon");
+        const aResearching = b.researchQueue.some((r) => r.kind === "armor");
+        const wCost = wl < 3 ? UPGRADES.weapon[wl].minerals : 0;
+        const aCost = al < 3 ? UPGRADES.armor[al].minerals : 0;
+        actions.push({ id: "research:weapon", key: "Q", label: wl >= 3 ? "Weapons MAX" : `Weapons +${wl + 1}`, cost: wl < 3 ? `${wCost}` : undefined, disabled: wl >= 3 || wResearching || p.minerals < wCost });
+        actions.push({ id: "research:armor", key: "W", label: al >= 3 ? "Armor MAX" : `Armor +${al + 1}`, cost: al < 3 ? `${aCost}` : undefined, disabled: al >= 3 || aResearching || p.minerals < aCost });
+        sub = `Ground Weapons +${wl} · Armor +${al}`;
+      } else if (b.type === "cybernetics") {
+        sub = "Unlocks the Stalker";
       } else if (b.type === "pylon") {
         sub = `Supply +${st.supply} · powers nearby buildings`;
       } else if (b.type === "cannon") {
@@ -151,6 +177,11 @@ export default function Match() {
     if (id.startsWith("train:")) {
       const b = selectedBuilding();
       if (b) dispatch({ type: "train", buildingId: b.id, unitType: id.slice(6) as UnitType });
+      return;
+    }
+    if (id.startsWith("research:")) {
+      const b = selectedBuilding();
+      if (b) dispatch({ type: "research", buildingId: b.id, kind: id.slice(9) as UpgradeKind });
       return;
     }
     if (id === "stop") {

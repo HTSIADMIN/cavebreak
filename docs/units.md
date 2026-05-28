@@ -63,3 +63,4 @@ Attributes drive combat counters (see [combat.md](./combat.md)). Copy SC2's tagg
   - **Stalker** — ranged (range 6), costs gas; from Gateway.
   - Unit state machine extended with `attacking` / `attack_moving`. Combat units auto-acquire the nearest enemy within their **sight radius**, move into weapon range, and fire on cooldown.
   - Not yet modelled: shields (folded into HP), attribute counters (Light/Armored bonus damage), air units. These are the natural next additions.
+- **2026-05-28 (update)** — Shields/armor/attributes now modelled (supersedes above): Worker `Light, Mech` (20 hp + 20 shields), Zealot `Light, Bio` (100+50, armor 1), Stalker `Armored, Mech` (80+80, armor 1, +5 vs Armored). The **Stalker now requires a Cybernetics Core**. See [balance-data.md](./balance-data.md).

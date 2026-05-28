@@ -4,23 +4,20 @@ import {
   GAS_PER_TRIP,
   MINERALS_PER_TRIP,
   MINERAL_GATHER_TIME_S,
+  SHIELD_REGEN_DELAY,
+  SHIELD_REGEN_RATE,
   SUPPLY_CAP,
   UNIT_STATS,
+  UPGRADES,
   WALL_CLEAR_MINERAL_BONUS,
   WALL_MINE_TIME_S,
 } from "./constants";
 import { computeVisibility } from "./fog";
-import {
-  getTile,
-  inBounds,
-  isAdjacentToTile,
-  isWalkable,
-  nearestAdjacentFloor,
-  setTile,
-} from "./grid";
+import { getTile, inBounds, isAdjacentToTile, isWalkable, nearestAdjacentFloor, setTile } from "./grid";
 import { findPath } from "./pathfinding";
 import { isPlacementPowered } from "./power";
 import {
+  Attribute,
   Building,
   BuildingType,
   Command,
@@ -30,6 +27,7 @@ import {
   TileType,
   Unit,
   UnitType,
+  UpgradeKind,
   Vec2,
 } from "./types";
 
@@ -46,7 +44,6 @@ function getBuilding(s: GameState, id: number) {
 function getDeposit(s: GameState, id: number) {
   return s.deposits.find((d) => d.id === id);
 }
-// A combat target can be a unit or a building.
 function getEntity(s: GameState, id: number): Unit | Building | undefined {
   return getUnit(s, id) ?? getBuilding(s, id);
 }
@@ -63,8 +60,13 @@ function entityCenter(e: Unit | Building): Vec2 {
 function entityRadius(e: Unit | Building): number {
   return isBuildingEntity(e) ? Math.max(e.w, e.h) / 2 : 0.4;
 }
+function entityAttrs(e: Unit | Building): Attribute[] {
+  return isBuildingEntity(e) ? BUILDING_STATS[e.type].attributes : UNIT_STATS[e.type].attributes;
+}
+function entityArmor(e: Unit | Building): number {
+  return isBuildingEntity(e) ? BUILDING_STATS[e.type].armor : UNIT_STATS[e.type].armor;
+}
 
-// Distance from a point to the nearest point of a building footprint.
 function distPointToBuilding(px: number, py: number, b: Building): number {
   const cx = Math.max(b.tx, Math.min(px, b.tx + b.w));
   const cy = Math.max(b.ty, Math.min(py, b.ty + b.h));
@@ -90,11 +92,11 @@ function nearestNexus(s: GameState, owner: PlayerId, from: Vec2): Building | nul
   return best;
 }
 
-function nearestMineralDeposit(s: GameState, from: Vec2): Deposit | null {
+function nearestDeposit(s: GameState, kind: "mineral" | "gas", from: Vec2): Deposit | null {
   let best: Deposit | null = null;
   let bd = Infinity;
   for (const d of s.deposits) {
-    if (d.kind !== "mineral" || d.remaining <= 0) continue;
+    if (d.kind !== kind || d.remaining <= 0) continue;
     const dist = (d.tx + 0.5 - from.x) ** 2 + (d.ty + 0.5 - from.y) ** 2;
     if (dist < bd) {
       bd = dist;
@@ -110,13 +112,21 @@ function isAdjacentToBuilding(ux: number, uy: number, b: Building): boolean {
   return fx >= b.tx - 1 && fx <= b.tx + b.w && fy >= b.ty - 1 && fy <= b.ty + b.h;
 }
 
+function tileOccupiedByBuilding(s: GameState, x: number, y: number): boolean {
+  for (const b of s.buildings) {
+    if (x >= b.tx && x < b.tx + b.w && y >= b.ty && y < b.ty + b.h) return true;
+  }
+  return false;
+}
+
 function approachTileForBuilding(s: GameState, b: Building, from: Vec2): Vec2 | null {
   let best: Vec2 | null = null;
   let bd = Infinity;
   for (let y = b.ty - 1; y <= b.ty + b.h; y++) {
     for (let x = b.tx - 1; x <= b.tx + b.w; x++) {
       const border = x === b.tx - 1 || x === b.tx + b.w || y === b.ty - 1 || y === b.ty + b.h;
-      if (!border || !isWalkable(s.grid, x, y)) continue;
+      // Must be a free, walkable floor tile (not under another building).
+      if (!border || !isWalkable(s.grid, x, y) || tileOccupiedByBuilding(s, x, y)) continue;
       const d = (x + 0.5 - from.x) ** 2 + (y + 0.5 - from.y) ** 2;
       if (d < bd) {
         bd = d;
@@ -125,6 +135,33 @@ function approachTileForBuilding(s: GameState, b: Building, from: Vec2): Vec2 | 
     }
   }
   return best;
+}
+
+// --- combat math ---------------------------------------------------------
+
+function dealDamage(
+  s: GameState,
+  attackerOwner: PlayerId,
+  base: number,
+  bonusVsArmored: number,
+  bonusVsLight: number,
+  applyWeaponUpgrade: boolean,
+  target: Unit | Building
+) {
+  const attrs = entityAttrs(target);
+  let dmg = base + (applyWeaponUpgrade ? s.players[attackerOwner].upgrades.groundWeapons : 0);
+  if (attrs.includes("armored")) dmg += bonusVsArmored;
+  if (attrs.includes("light")) dmg += bonusVsLight;
+  let armor = entityArmor(target);
+  if (!isBuildingEntity(target)) armor += s.players[target.owner].upgrades.groundArmor;
+  dmg = Math.max(0.5, dmg - armor);
+  if (target.shields > 0) {
+    const absorbed = Math.min(target.shields, dmg);
+    target.shields -= absorbed;
+    dmg -= absorbed;
+  }
+  if (dmg > 0) target.hp -= dmg;
+  target.shieldRegenCd = SHIELD_REGEN_DELAY;
 }
 
 // --- movement ------------------------------------------------------------
@@ -181,8 +218,6 @@ function becomeIdle(u: Unit) {
   u.attackGoal = null;
 }
 
-// --- combat targeting ----------------------------------------------------
-
 function acquireTarget(s: GameState, u: Unit, range: number): number | null {
   let bestUnit: number | null = null;
   let bestUnitD = Infinity;
@@ -231,12 +266,10 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       }
       return;
     }
-
     case "moving": {
       if (stepMove(u, dt)) becomeIdle(u);
       return;
     }
-
     case "attack_moving": {
       const t = acquireTarget(s, u, stats.sight);
       if (t !== null) {
@@ -265,7 +298,6 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       }
       return;
     }
-
     case "attacking": {
       const tgt = u.targetId !== null ? getEntity(s, u.targetId) : undefined;
       if (!tgt || tgt.hp <= 0) {
@@ -277,21 +309,19 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       if (inWeaponRange(u, tgt, stats.range)) {
         u.path = null;
         if (u.attackCd <= 0 && stats.damage > 0) {
-          tgt.hp -= stats.damage;
+          dealDamage(s, u.owner, stats.damage, stats.bonusVsArmored, stats.bonusVsLight, true, tgt);
           u.attackCd = stats.cooldown;
         }
       } else {
         const c = entityCenter(tgt);
         const goalTile = isBuildingEntity(tgt)
           ? approachTileForBuilding(s, tgt, u)
-          : nearestAdjacentFloor(s.grid, Math.floor(c.x), Math.floor(c.y), u) ??
-            { x: Math.floor(c.x), y: Math.floor(c.y) };
+          : nearestAdjacentFloor(s.grid, Math.floor(c.x), Math.floor(c.y), u) ?? { x: Math.floor(c.x), y: Math.floor(c.y) };
         if (u.repathCd <= 0 || u.path === null) {
           const p = goalTile ? findPath(s.grid, s.buildings, u, goalTile) : null;
           u.path = p;
           u.repathCd = 0.4;
           if (!p) {
-            // Can't reach; give up this target.
             u.targetId = null;
             u.state = u.attackGoal ? "attack_moving" : "idle";
             return;
@@ -301,7 +331,6 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       }
       return;
     }
-
     case "mining_wall": {
       const t = u.mineTile;
       if (!t || getTile(s.grid, t.x, t.y) !== TileType.ROCK) {
@@ -320,11 +349,10 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       }
       return;
     }
-
     case "harvesting": {
       let dep = u.depositId !== null ? getDeposit(s, u.depositId) : undefined;
       if (!dep || dep.remaining <= 0) {
-        dep = nearestMineralDeposit(s, u) ?? undefined;
+        dep = nearestDeposit(s, "mineral", u) ?? undefined;
         if (!dep) return becomeIdle(u);
         u.depositId = dep.id;
         u.path = null;
@@ -347,7 +375,6 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       }
       return;
     }
-
     case "returning_resource": {
       const base = nearestNexus(s, u.owner, u);
       if (!base) {
@@ -368,7 +395,6 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       u.state = "harvesting";
       return;
     }
-
     case "constructing": {
       const b = u.buildTargetId !== null ? getBuilding(s, u.buildTargetId) : undefined;
       if (!b || b.built) {
@@ -380,14 +406,13 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       const adj = isAdjacentToBuilding(u.x, u.y, b);
       const res = approach(s, u, adj, approachTileForBuilding(s, b, u), dt);
       if (res === "blocked") {
-        // Can't reach the site — refund and cancel.
         refundBuilding(s, b);
         u.buildTargetId = null;
         becomeIdle(u);
         return;
       }
       if (res !== "arrived") return;
-      b.started = true; // warp-in begins; Protoss buildings self-complete
+      b.started = true;
       u.buildTargetId = null;
       u.state = "harvesting";
       u.depositId = null;
@@ -409,7 +434,23 @@ function refundBuilding(s: GameState, b: Building) {
   s.buildings = s.buildings.filter((x) => x.id !== b.id);
 }
 
-// --- construction, production, building combat ---------------------------
+// --- shields, construction, production, research, building combat --------
+
+function updateShields(s: GameState, dt: number) {
+  for (const u of s.units) {
+    u.shieldRegenCd = Math.max(0, u.shieldRegenCd - dt);
+    if (u.shieldRegenCd <= 0 && u.shields < u.maxShields) {
+      u.shields = Math.min(u.maxShields, u.shields + SHIELD_REGEN_RATE * dt);
+    }
+  }
+  for (const b of s.buildings) {
+    if (!b.built) continue;
+    b.shieldRegenCd = Math.max(0, b.shieldRegenCd - dt);
+    if (b.shieldRegenCd <= 0 && b.shields < b.maxShields) {
+      b.shields = Math.min(b.maxShields, b.shields + SHIELD_REGEN_RATE * dt);
+    }
+  }
+}
 
 function updateConstruction(s: GameState, dt: number) {
   for (const b of s.buildings) {
@@ -420,6 +461,7 @@ function updateConstruction(s: GameState, dt: number) {
     if (b.buildProgress >= st.buildTime) {
       b.built = true;
       b.hp = b.maxHp;
+      b.shields = b.maxShields;
     }
   }
 }
@@ -436,6 +478,9 @@ function spawnUnit(s: GameState, b: Building, type: UnitType) {
     y: tile.y + 0.5,
     hp: st.hp,
     maxHp: st.hp,
+    shields: st.shields,
+    maxShields: st.shields,
+    shieldRegenCd: 0,
     state: "idle",
     path: null,
     moveGoal: null,
@@ -452,7 +497,7 @@ function spawnUnit(s: GameState, b: Building, type: UnitType) {
   };
   s.units.push(u);
   if (type === "worker") {
-    u.state = "harvesting"; // auto-mine
+    u.state = "harvesting";
   } else if (b.rally) {
     const p = findPath(s.grid, s.buildings, u, b.rally);
     if (p) {
@@ -476,14 +521,28 @@ function updateProduction(s: GameState, dt: number) {
   }
 }
 
+function updateResearch(s: GameState, dt: number) {
+  for (const b of s.buildings) {
+    if (!b.built || b.researchQueue.length === 0) continue;
+    const item = b.researchQueue[0];
+    const p = s.players[b.owner];
+    const level = item.kind === "weapon" ? p.upgrades.groundWeapons : p.upgrades.groundArmor;
+    b.researchProgress += dt;
+    if (b.researchProgress >= UPGRADES[item.kind][Math.min(level, 2)].time) {
+      b.researchProgress = 0;
+      b.researchQueue.shift();
+      if (item.kind === "weapon") p.upgrades.groundWeapons += 1;
+      else p.upgrades.groundArmor += 1;
+    }
+  }
+}
+
 function updateBuildingCombat(s: GameState, dt: number) {
   for (const b of s.buildings) {
     if (!b.built) continue;
     const st = BUILDING_STATS[b.type];
     if (st.damage <= 0) continue;
     b.attackCd = Math.max(0, b.attackCd - dt);
-    const c = buildingCenter(b);
-    // acquire nearest enemy unit in range
     let target: Unit | null = null;
     let bd = Infinity;
     for (const e of s.units) {
@@ -495,10 +554,9 @@ function updateBuildingCombat(s: GameState, dt: number) {
       }
     }
     if (target && b.attackCd <= 0) {
-      target.hp -= st.damage;
+      dealDamage(s, b.owner, st.damage, 0, 0, false, target);
       b.attackCd = st.cooldown;
     }
-    void c;
   }
 }
 
@@ -528,8 +586,7 @@ function recomputeSupply(s: GameState) {
 function checkWinCondition(s: GameState) {
   for (const p of s.players) {
     if (p.defeated) continue;
-    const hasBuildings = s.buildings.some((b) => b.owner === p.id);
-    if (!hasBuildings) p.defeated = true;
+    if (!s.buildings.some((b) => b.owner === p.id)) p.defeated = true;
   }
   const alive = s.players.filter((p) => !p.defeated);
   if (alive.length === 1 && s.winner === null) s.winner = alive[0].id;
@@ -539,6 +596,10 @@ function checkWinCondition(s: GameState) {
 
 function rectsOverlap(ax: number, ay: number, aw: number, ah: number, bx: number, by: number, bw: number, bh: number) {
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+
+function hasBuilt(s: GameState, owner: PlayerId, type: BuildingType): boolean {
+  return s.buildings.some((b) => b.owner === owner && b.type === type && b.built);
 }
 
 export function canPlaceBuilding(s: GameState, owner: PlayerId, type: BuildingType, tx: number, ty: number): boolean {
@@ -551,6 +612,7 @@ export function canPlaceBuilding(s: GameState, owner: PlayerId, type: BuildingTy
   for (const b of s.buildings) {
     if (rectsOverlap(tx, ty, st.w, st.h, b.tx, b.ty, b.w, b.h)) return false;
   }
+  if (st.requires && !hasBuilt(s, owner, st.requires)) return false;
   if (st.needsPower && !isPlacementPowered(s, owner, tx, ty, st.w, st.h)) return false;
   return true;
 }
@@ -572,12 +634,17 @@ function placeBuilding(s: GameState, owner: PlayerId, type: BuildingType, tx: nu
     h: st.h,
     hp: 1,
     maxHp: st.hp,
+    shields: 0,
+    maxShields: st.shields,
+    shieldRegenCd: 0,
     built: false,
     started: false,
     buildProgress: 0,
     queue: [],
     produceProgress: 0,
     rally: null,
+    researchQueue: [],
+    researchProgress: 0,
     targetId: null,
     attackCd: 0,
   };
@@ -596,12 +663,26 @@ function enqueueTrain(s: GameState, b: Building, type: UnitType): boolean {
   if (!b.built) return false;
   if (!BUILDING_STATS[b.type].produces.includes(type)) return false;
   const st = UNIT_STATS[type];
+  if (st.requires && !hasBuilt(s, b.owner, st.requires)) return false;
   const p = s.players[b.owner];
   if (p.minerals < st.minerals || p.gas < st.gas) return false;
   if (p.supplyUsed + st.supply > p.supplyMax) return false;
   p.minerals -= st.minerals;
   p.gas -= st.gas;
   b.queue.push({ unitType: type });
+  return true;
+}
+
+function enqueueResearch(s: GameState, b: Building, kind: UpgradeKind): boolean {
+  if (!b.built || !BUILDING_STATS[b.type].researches) return false;
+  const p = s.players[b.owner];
+  const level = kind === "weapon" ? p.upgrades.groundWeapons : p.upgrades.groundArmor;
+  if (level >= 3) return false;
+  if (b.researchQueue.some((r) => r.kind === kind)) return false;
+  const cost = UPGRADES[kind][level];
+  if (p.minerals < cost.minerals) return false;
+  p.minerals -= cost.minerals;
+  b.researchQueue.push({ kind });
   return true;
 }
 
@@ -637,7 +718,6 @@ export function applyCommand(s: GameState, cmd: Command): void {
       }
       return;
     }
-
     case "attack": {
       const tgt = getEntity(s, cmd.targetId);
       if (!tgt) return;
@@ -653,7 +733,6 @@ export function applyCommand(s: GameState, cmd: Command): void {
       }
       return;
     }
-
     case "mine": {
       if (getTile(s.grid, cmd.tx, cmd.ty) !== TileType.ROCK) return;
       for (const id of cmd.unitIds) {
@@ -669,7 +748,6 @@ export function applyCommand(s: GameState, cmd: Command): void {
       }
       return;
     }
-
     case "harvest": {
       const dep = getDeposit(s, cmd.depositId);
       if (!dep) return;
@@ -685,7 +763,6 @@ export function applyCommand(s: GameState, cmd: Command): void {
       }
       return;
     }
-
     case "stop": {
       for (const id of cmd.unitIds) {
         const u = getUnit(s, id);
@@ -693,20 +770,22 @@ export function applyCommand(s: GameState, cmd: Command): void {
       }
       return;
     }
-
     case "build": {
       const worker = cmd.unitIds.map((id) => getUnit(s, id)).find((u) => u && u.type === "worker") ?? null;
       if (!worker) return;
       placeBuilding(s, worker.owner, cmd.buildingType, cmd.tx, cmd.ty, worker);
       return;
     }
-
     case "train": {
       const b = getBuilding(s, cmd.buildingId);
       if (b) enqueueTrain(s, b, cmd.unitType);
       return;
     }
-
+    case "research": {
+      const b = getBuilding(s, cmd.buildingId);
+      if (b) enqueueResearch(s, b, cmd.kind);
+      return;
+    }
     case "setRally": {
       const b = getBuilding(s, cmd.buildingId);
       if (b) b.rally = { x: cmd.tx, y: cmd.ty };
@@ -733,13 +812,28 @@ function findPlacementNear(s: GameState, owner: PlayerId, type: BuildingType, ne
 
 function freeWorker(s: GameState, owner: PlayerId): Unit | null {
   return (
-    s.units.find((u) => u.owner === owner && u.type === "worker" && (u.state === "harvesting" || u.state === "idle")) ??
-    null
+    s.units.find((u) => u.owner === owner && u.type === "worker" && (u.state === "harvesting" || u.state === "idle")) ?? null
   );
 }
 
+type BuildResult = "built" | "saving" | "cannot";
+// Tries to build `type` near `near`. Returns "saving" when a spot exists but we
+// can't afford it yet (caller should stop and accumulate), "cannot" when no
+// placement is possible (caller should fall through), "built" on success.
+function aiTryBuild(s: GameState, owner: PlayerId, type: BuildingType, near: Vec2): BuildResult {
+  const st = BUILDING_STATS[type];
+  const p = s.players[owner];
+  const spot = findPlacementNear(s, owner, type, near);
+  if (!spot) return "cannot";
+  if (p.minerals < st.minerals || p.gas < st.gas) return "saving";
+  const w = freeWorker(s, owner);
+  if (!w) return "saving";
+  placeBuilding(s, owner, type, spot.x, spot.y, w);
+  return "built";
+}
+
 function runAI(s: GameState, _dt: number) {
-  if (s.tick % 16 !== 0) return; // ~once per second
+  if (s.tick % 16 !== 0) return; // ~once/second
   const owner: PlayerId = 1;
   const p = s.players[owner];
   if (p.defeated) return;
@@ -748,45 +842,79 @@ function runAI(s: GameState, _dt: number) {
   const myBuildings = s.buildings.filter((b) => b.owner === owner);
   const nexus = myBuildings.find((b) => b.type === "nexus");
   if (!nexus) return;
+  const nc = buildingCenter(nexus);
 
   const workers = myUnits.filter((u) => u.type === "worker");
   const army = myUnits.filter((u) => u.type !== "worker");
   const pylons = myBuildings.filter((b) => b.type === "pylon");
-  const hasBuiltPylon = pylons.some((b) => b.built);
+  const builtPylon = pylons.find((b) => b.built);
+  const hasPylon = !!builtPylon;
   const buildingPylon = pylons.some((b) => !b.built);
+  const pc = builtPylon ? buildingCenter(builtPylon) : nc;
   const gateways = myBuildings.filter((b) => b.type === "gateway");
-  const hasGateway = gateways.some((b) => b.built);
-  const buildingGateway = gateways.some((b) => !b.built);
+  const cannons = myBuildings.filter((b) => b.type === "cannon");
+  const margin = p.supplyMax - p.supplyUsed;
+  const gatewayBuilt = gateways.some((b) => b.built);
+  const cyberBuilt = myBuildings.some((b) => b.type === "cybernetics" && b.built);
 
-  // Supply ahead of need.
-  if (p.supplyMax < SUPPLY_CAP && p.supplyMax - p.supplyUsed <= 2 && p.minerals >= 100 && !buildingPylon) {
-    const w = freeWorker(s, owner);
-    const spot = findPlacementNear(s, owner, "pylon", buildingCenter(nexus));
-    if (w && spot) placeBuilding(s, owner, "pylon", spot.x, spot.y, w);
-    return;
+  // Keep ~2 workers on gas so we can afford Stalkers + tech.
+  const gasDep = nearestDeposit(s, "gas", nc);
+  if (gasDep) {
+    const onGas = workers.filter((u) => u.depositId === gasDep.id).length;
+    if (onGas < 2) {
+      const w = workers.find((u) => u.state === "harvesting" && u.depositId !== gasDep.id);
+      if (w) {
+        w.depositId = gasDep.id;
+        w.state = "harvesting";
+        w.path = null;
+      }
+    }
   }
-  // Workers up to saturation.
-  if (workers.length < 16 && nexus.queue.length === 0 && p.minerals >= 50 && p.supplyUsed < p.supplyMax) {
+
+  // 0. Ramp workers to ~12 (cheap; do this before saving for tech).
+  if (workers.length < 12 && nexus.queue.length === 0 && p.minerals >= 50 && p.supplyUsed < p.supplyMax) {
     enqueueTrain(s, nexus, "worker");
     return;
   }
-  // First Gateway once powered.
-  if (hasBuiltPylon && !hasGateway && !buildingGateway && p.minerals >= 150) {
-    const w = freeWorker(s, owner);
-    const spot = findPlacementNear(s, owner, "gateway", buildingCenter(pylons[0]));
-    if (w && spot) placeBuilding(s, owner, "gateway", spot.x, spot.y, w);
-    return;
+  // 1–4. Tech goals: save until affordable (don't fritter minerals on cheaper things);
+  // only fall through when placement is impossible.
+  if (!hasPylon && !buildingPylon) {
+    if (aiTryBuild(s, owner, "pylon", nc) !== "cannot") return;
   }
-  // Pump zealots.
-  if (hasGateway && p.minerals >= 100 && p.supplyUsed + 2 <= p.supplyMax) {
-    const gw = gateways.find((b) => b.built && b.queue.length < 2);
-    if (gw) {
+  if (hasPylon && gateways.length === 0) {
+    if (aiTryBuild(s, owner, "gateway", pc) !== "cannot") return;
+  }
+  if (gatewayBuilt && !myBuildings.some((b) => b.type === "cybernetics")) {
+    if (aiTryBuild(s, owner, "cybernetics", pc) !== "cannot") return;
+  }
+  if (gatewayBuilt && !myBuildings.some((b) => b.type === "forge")) {
+    if (aiTryBuild(s, owner, "forge", pc) !== "cannot") return;
+  }
+  // 5. More supply as the cap approaches.
+  if (p.supplyMax < SUPPLY_CAP && margin <= 2 && !buildingPylon) {
+    if (aiTryBuild(s, owner, "pylon", nc) !== "cannot") return;
+  }
+  // 6. A couple of defensive cannons when flush.
+  if (cannons.length < 2 && cyberBuilt && p.minerals >= 300) {
+    aiTryBuild(s, owner, "cannon", nc);
+  }
+  // 7. Forge research.
+  const forge = myBuildings.find((b) => b.type === "forge" && b.built && b.researchQueue.length === 0);
+  if (forge && p.minerals >= 250) {
+    if (p.upgrades.groundWeapons <= p.upgrades.groundArmor) enqueueResearch(s, forge, "weapon");
+    else enqueueResearch(s, forge, "armor");
+  }
+  // 8. Train army (mix Stalkers once Cybernetics + gas allow).
+  const gw = gateways.find((b) => b.built && b.queue.length < 2);
+  if (gw && margin >= 2) {
+    if (cyberBuilt && p.gas >= 50 && p.minerals >= 125 && army.length % 3 === 0) {
+      enqueueTrain(s, gw, "stalker");
+    } else if (p.minerals >= 100) {
       enqueueTrain(s, gw, "zealot");
-      return;
     }
   }
-  // Attack: every ~40s, send the army at the enemy if it's big enough.
-  if (army.length >= 5 && s.tick % (16 * 40) < 16) {
+  // 9. Attack waves.
+  if (army.length >= 6 && s.tick % (16 * 35) < 16) {
     const enemyNexus = s.buildings.find((b) => b.owner === 0 && b.type === "nexus");
     if (enemyNexus) {
       const goal = approachTileForBuilding(s, enemyNexus, buildingCenter(enemyNexus)) ?? buildingCenter(enemyNexus);
@@ -806,7 +934,9 @@ export function step(s: GameState, dt: number): void {
   for (const u of s.units) updateUnit(s, u, dt);
   updateConstruction(s, dt);
   updateProduction(s, dt);
+  updateResearch(s, dt);
   updateBuildingCombat(s, dt);
+  updateShields(s, dt);
   cleanupDead(s);
   recomputeSupply(s);
   if (s.tick % 4 === 0) computeVisibility(s, 0, s.visibility);

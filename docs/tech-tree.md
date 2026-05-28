@@ -43,3 +43,4 @@ A complete SC2 tech-tree cheat sheet exists (Liquipedia "Tech Tree (Legacy of th
 ## Implementation Notes
 
 - **2026-05-28** — Implemented dependency chain: **Nexus → Pylon (power) → Gateway (needs power) → Zealot/Stalker**; **Photon Cannon** also needs power. Enforced via powered placement in `canPlaceBuilding` + `BUILDING_STATS.produces` (`world.ts`/`constants.ts`). Upgrades/research building deferred.
+- **2026-05-28 (update)** — Added **Cybernetics Core** (requires a built Gateway; **gates the Stalker**) and **Forge** (researches Ground Weapons / Armor +1/+2/+3). Building prerequisites enforced via `requires` in `canPlaceBuilding`; unit prerequisites via `requires` in `enqueueTrain`.
