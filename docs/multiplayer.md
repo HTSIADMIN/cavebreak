@@ -52,4 +52,4 @@ Two common approaches — pick based on effort vs. bandwidth:
 
 ## Implementation Notes
 
-- _(none yet)_
+- **2026-05-28** — Supabase side scaffolded (still local, no netcode yet): `lib/supabase/client.ts` (browser client, anon key, Realtime) and `supabase/migrations/0001_lobbies.sql` (`lobbies` + `lobby_players`, permissive anon RLS, Realtime publication) per the lobby flow above. Env via `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` (see `.env.example`). DB home is the Supabase project `faexpupzpyubdcbooypo`; the migration still needs to be applied there (SQL editor or Supabase CLI). No lobby UI or state-sync wired yet.
