@@ -1,0 +1,49 @@
+# Combat
+
+Combat resolution copies StarCraft 2's model: real-time, attribute-based damage with bonus-damage counters. Numbers in [balance-data.md](./balance-data.md).
+
+## Core Damage Model (from SC2)
+
+- Each attack has a **base damage** value, an **attack cooldown** (→ DPS), and a **range**.
+- Damage is reduced by the target's **armor** (flat reduction per hit, like SC2). Armor is raised by upgrades (see [tech-tree.md](./tech-tree.md)).
+- Many weapons deal **bonus damage vs an attribute** (e.g. +X vs Armored, +X vs Light) — this is the counter system. (See attributes in [units.md](./units.md).)
+- Shields (if a faction uses them, SC2 Protoss-style) absorb before health — *defer unless we add that faction.*
+
+## Targeting Rules
+
+- **Ground vs Air:** a weapon may hit ground only, air only, or both. Units with no anti-air can't touch flyers — classic SC2 constraint that drives composition.
+- Units auto-acquire targets in range when on attack-move or when an enemy enters range while idle (copy SC2 acquisition behavior).
+
+## Player Commands
+
+- **Move** — go to a point, ignore enemies.
+- **Attack-move (A-move)** — move toward a point but engage any enemy encountered en route. The bread-and-butter RTS command.
+- **Attack target** — focus-fire a specific unit/building.
+- **Stop / Hold position.**
+- Selection: single click, drag-box, double-click-to-select-type, control groups (number keys) — all copy SC2. (Keybinds live in [ui.md](./ui.md).)
+
+## Vision in Combat
+
+- Units can only attack what their side can **see**. You need vision (a unit with line of sight) on a target to fire on it. Flyers and units in fog you have no vision on cannot be targeted. (See [fog-of-war.md](./fog-of-war.md).)
+
+## Buildings in Combat
+
+- Buildings have health and can be attacked/destroyed.
+- Static defense structures attack automatically within range (see [buildings.md](./buildings.md)) — key for defending mined chokes.
+- Mechanical units/buildings can be **repaired by workers**; biological units **healed** by support units.
+
+## Win Condition (MVP)
+
+- Eliminate all of an opponent's bases/structures. Last player standing wins. (Restated from [GAME_DESIGN.md](../GAME_DESIGN.md).)
+
+## Related Systems
+
+- [units.md](./units.md) — attributes, stats, roles that feed counters.
+- [fog-of-war.md](./fog-of-war.md) — you can only hit what you can see.
+- [tech-tree.md](./tech-tree.md) — attack/armor upgrades modify combat.
+- [buildings.md](./buildings.md) — static defense and repairable structures.
+- [balance-data.md](./balance-data.md) — damage, armor, range, cooldown values.
+
+## Implementation Notes
+
+- _(none yet)_
