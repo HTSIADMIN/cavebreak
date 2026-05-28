@@ -1,0 +1,8 @@
+# Supabase project config. The GitHub integration applies the SQL in
+# supabase/migrations/ to the linked project (faexpupzpyubdcbooypo) on push to
+# the production branch.
+project_id = "cavebreak"
+
+[db]
+# Should match the linked project's Postgres major version.
+major_version = 17
