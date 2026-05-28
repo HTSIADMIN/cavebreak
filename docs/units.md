@@ -1,6 +1,6 @@
 # Units
 
-The unit roster, stats, costs, and counters are **lifted from StarCraft 2** (single faction to start, modeled on SC2 Terran for clean RTS-template mechanics). Exact numbers live in [balance-data.md](./balance-data.md).
+The unit roster, stats, costs, and counters are **lifted from StarCraft 2** (single faction, modeled on **SC2 Protoss**: Probe / Zealot / Stalker, with Pylon-powered production). Exact numbers live in [balance-data.md](./balance-data.md).
 
 ## Worker
 
@@ -57,4 +57,9 @@ Attributes drive combat counters (see [combat.md](./combat.md)). Copy SC2's tagg
 
 ## Implementation Notes
 
-- _(none yet)_
+- **2026-05-28** — Implemented in `game/sim` (stats in `constants.ts: UNIT_STATS`):
+  - **Worker** (Probe) — mines walls, harvests, constructs; weak melee for self-defense.
+  - **Zealot** — melee, tanky; from Gateway.
+  - **Stalker** — ranged (range 6), costs gas; from Gateway.
+  - Unit state machine extended with `attacking` / `attack_moving`. Combat units auto-acquire the nearest enemy within their **sight radius**, move into weapon range, and fire on cooldown.
+  - Not yet modelled: shields (folded into HP), attribute counters (Light/Armored bonus damage), air units. These are the natural next additions.

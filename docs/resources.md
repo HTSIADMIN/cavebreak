@@ -49,4 +49,4 @@ Resources are spent on: workers, combat units, buildings, supply structures, and
 
 ## Implementation Notes
 
-- _(none yet)_
+- **2026-05-28** — Supply is Protoss-style: **Pylon +8**, **Nexus +15** (`recomputeSupply` in `world.ts`), hard cap 200. Minerals 5/trip, gas 4/trip. Gas is currently harvested directly from a geyser (the Extractor structure is deferred — see [mining.md](./mining.md)). Combat units cost supply (Zealot/Stalker = 2 each).

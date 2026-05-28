@@ -1,6 +1,6 @@
 # Buildings
 
-Building roles, costs, and dependencies are modeled on **StarCraft 2** (single faction, Terran-style template). Exact numbers in [balance-data.md](./balance-data.md).
+Building roles, costs, and dependencies are modeled on **StarCraft 2** — single faction, **Protoss-style** (Pylons project a power field; most buildings must be placed within power). Exact numbers in [balance-data.md](./balance-data.md).
 
 ## Base / Townhall
 
@@ -61,4 +61,11 @@ Each tier of unit comes from a dedicated production building. SC2 Terran templat
 
 ## Implementation Notes
 
-- _(none yet)_
+- **2026-05-28** — Implemented Protoss-style in `game/sim` (stats in `constants.ts: BUILDING_STATS`):
+  - **Nexus** (townhall) — +15 supply, builds Workers, resource deposit point.
+  - **Pylon** — +8 supply and projects a **power field** (`POWER_RADIUS`, see `power.ts`).
+  - **Gateway** — builds Zealot/Stalker; **requires power**.
+  - **Photon Cannon** — static defense, auto-attacks enemies in range; **requires power**.
+  - Powered buildings must be placed inside a Pylon field — validated by `canPlaceBuilding` (`world.ts`).
+  - **Construction is Protoss-style**: a worker walks to the site and initiates the warp-in (`started`), then the building self-completes over its build time (`buildProgress`) while the worker frees up. Can't-reach cancels and refunds.
+  - Deferred: tech/upgrade building, add-ons, gas Extractor as a separate structure (gas is currently harvested directly from a geyser — see [mining.md](./mining.md)).

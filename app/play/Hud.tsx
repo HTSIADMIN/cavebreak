@@ -1,12 +1,11 @@
 "use client";
 
-export interface HudSelection {
-  kind: "none" | "units" | "base";
-  count: number;
-  baseId?: number;
-  baseQueue?: number;
-  unitState?: string;
-  canBuildWorker?: boolean;
+export interface HudAction {
+  id: string;
+  key: string; // hotkey letter
+  label: string;
+  cost?: string;
+  disabled?: boolean;
 }
 
 export interface HudData {
@@ -14,20 +13,21 @@ export interface HudData {
   gas: number;
   supplyUsed: number;
   supplyMax: number;
-  selection: HudSelection;
+  winner: number | null;
+  localPlayer: number;
+  title: string;
+  sub?: string;
+  hint?: string;
+  actions: HudAction[];
 }
 
 export function TopBar({ minerals, gas, supplyUsed, supplyMax }: HudData) {
-  const supplyCapped = supplyUsed >= supplyMax;
+  const capped = supplyUsed >= supplyMax;
   return (
     <div className="pointer-events-none absolute left-0 top-0 flex gap-6 px-4 py-2 font-mono text-sm">
       <Stat label="Minerals" value={Math.floor(minerals)} color="text-cyan-300" />
       <Stat label="Gas" value={Math.floor(gas)} color="text-green-300" />
-      <Stat
-        label="Supply"
-        value={`${supplyUsed}/${supplyMax}`}
-        color={supplyCapped ? "text-red-400" : "text-zinc-200"}
-      />
+      <Stat label="Supply" value={`${supplyUsed}/${supplyMax}`} color={capped ? "text-red-400" : "text-zinc-200"} />
     </div>
   );
 }
@@ -41,96 +41,47 @@ function Stat({ label, value, color }: { label: string; value: string | number; 
   );
 }
 
-export function SelectionPanel({ selection }: { selection: HudSelection }) {
+export function SelectionPanel({ title, sub, hint }: { title: string; sub?: string; hint?: string }) {
   return (
     <div className="flex-1 border-x border-zinc-800 px-4 py-3">
-      {selection.kind === "none" && (
-        <p className="text-sm text-zinc-600">Nothing selected.</p>
-      )}
-      {selection.kind === "base" && (
-        <div>
-          <p className="text-sm font-semibold text-zinc-200">Base</p>
-          <p className="text-xs text-zinc-400">Townhall · produces workers · deposit point</p>
-          <p className="mt-1 text-xs text-zinc-500">Queue: {selection.baseQueue ?? 0}</p>
-        </div>
-      )}
-      {selection.kind === "units" && (
-        <div>
-          <p className="text-sm font-semibold text-zinc-200">
-            {selection.count} Worker{selection.count > 1 ? "s" : ""}
-          </p>
-          {selection.count === 1 && selection.unitState && (
-            <p className="text-xs text-zinc-400">State: {labelState(selection.unitState)}</p>
-          )}
-        </div>
-      )}
+      <p className="text-sm font-semibold text-zinc-200">{title}</p>
+      {sub && <p className="text-xs text-zinc-400">{sub}</p>}
+      {hint && <p className="mt-2 text-xs text-zinc-500">{hint}</p>}
     </div>
   );
 }
 
-export function CommandCard({
-  selection,
-  onBuildWorker,
-  onStop,
-}: {
-  selection: HudSelection;
-  onBuildWorker: () => void;
-  onStop: () => void;
-}) {
+export function CommandCard({ actions, onAction }: { actions: HudAction[]; onAction: (id: string) => void }) {
   return (
-    <div className="w-72 px-4 py-3">
-      {selection.kind === "base" && (
+    <div className="grid w-72 grid-cols-3 content-start gap-1.5 px-3 py-3">
+      {actions.map((a) => (
         <button
-          onClick={onBuildWorker}
-          disabled={!selection.canBuildWorker}
-          className="w-full rounded bg-zinc-800 px-3 py-2 text-left text-sm text-zinc-100 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+          key={a.id}
+          onClick={() => onAction(a.id)}
+          disabled={a.disabled}
+          title={a.cost}
+          className="flex aspect-square flex-col items-center justify-center rounded border border-zinc-800 bg-zinc-900 p-1 text-center transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-35"
         >
-          <span className="font-semibold">Build Worker</span>{" "}
-          <kbd className="rounded bg-zinc-900 px-1 text-xs text-zinc-400">B</kbd>
-          <span className="ml-2 text-xs text-cyan-300">50 min</span>
+          <span className="text-[11px] font-medium leading-tight text-zinc-100">{a.label}</span>
+          {a.cost && <span className="mt-0.5 text-[9px] text-cyan-300">{a.cost}</span>}
+          <kbd className="mt-0.5 rounded bg-zinc-950 px-1 text-[9px] text-zinc-500">{a.key}</kbd>
         </button>
-      )}
-      {selection.kind === "units" && (
-        <div className="space-y-2 text-xs text-zinc-400">
-          <p>
-            <span className="text-zinc-300">Right-click</span> rock to mine · mineral to gather ·
-            floor to move
-          </p>
-          <div className="flex gap-2">
-            <Hint k="A">attack-move</Hint>
-            <button
-              onClick={onStop}
-              className="rounded bg-zinc-800 px-2 py-1 text-zinc-200 hover:bg-zinc-700"
-            >
-              Stop <kbd className="text-zinc-500">S</kbd>
-            </button>
-          </div>
-        </div>
-      )}
-      {selection.kind === "none" && (
-        <p className="text-xs text-zinc-600">
-          Arrow keys / minimap to pan. Left-click or drag to select.
-        </p>
-      )}
+      ))}
     </div>
   );
 }
 
-function Hint({ k, children }: { k: string; children: React.ReactNode }) {
+export function WinnerBanner({ winner, localPlayer }: { winner: number | null; localPlayer: number }) {
+  if (winner === null) return null;
+  const won = winner === localPlayer;
   return (
-    <span className="rounded bg-zinc-800 px-2 py-1 text-zinc-300">
-      <kbd className="text-zinc-500">{k}</kbd> {children}
-    </span>
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+      <div className={`rounded-2xl px-10 py-6 text-center backdrop-blur-sm ${won ? "bg-cyan-500/15" : "bg-red-500/15"}`}>
+        <p className={`text-5xl font-bold tracking-tight ${won ? "text-cyan-300" : "text-red-300"}`}>
+          {won ? "Victory" : "Defeat"}
+        </p>
+        <p className="mt-1 text-sm text-zinc-400">Reload to play again</p>
+      </div>
+    </div>
   );
-}
-
-function labelState(s: string): string {
-  switch (s) {
-    case "mining_wall":
-      return "mining wall";
-    case "returning_resource":
-      return "returning cargo";
-    default:
-      return s;
-  }
 }

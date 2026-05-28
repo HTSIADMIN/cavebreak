@@ -42,4 +42,4 @@ A complete SC2 tech-tree cheat sheet exists (Liquipedia "Tech Tree (Legacy of th
 
 ## Implementation Notes
 
-- _(none yet)_
+- **2026-05-28** — Implemented dependency chain: **Nexus → Pylon (power) → Gateway (needs power) → Zealot/Stalker**; **Photon Cannon** also needs power. Enforced via powered placement in `canPlaceBuilding` + `BUILDING_STATS.produces` (`world.ts`/`constants.ts`). Upgrades/research building deferred.

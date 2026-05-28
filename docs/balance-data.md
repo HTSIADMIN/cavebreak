@@ -34,34 +34,28 @@
 | Tile size (render) | 32 px | Cosmetic. |
 | Tick rate (sim) | 10–20 Hz | See [multiplayer.md](./multiplayer.md). |
 
-## Units (fill from Liquipedia LotV stats)
+## Units (implemented — Protoss-style)
 
-Template — copy SC2 numbers into each row as units are implemented:
+Current roster + stats (mirrors `game/sim/constants.ts: UNIT_STATS`). HP folds shields in; armor and attribute-bonus counters are not modelled yet.
 
-| Unit | Minerals | Gas | Supply | Build time | HP | Armor | Attack | Range | Cooldown | Attributes | Targets | Produced by |
-|------|----------|-----|--------|-----------|----|----|--------|-------|----------|-----------|---------|-------------|
-| Worker | 50 | 0 | 1 | (SC2) | (SC2) | 0 | (SC2) | melee | — | Light, Bio | ground | Base |
-| Basic infantry (Marine) | (SC2) | (SC2) | 1 | (SC2) | (SC2) | (SC2) | (SC2) | (SC2) | (SC2) | Light, Bio | grnd+air | Barracks |
-| Anti-armor inf (Marauder) | (SC2) | (SC2) | 2 | (SC2) | (SC2) | (SC2) | +vs Armored | (SC2) | (SC2) | Armored, Bio | ground | Barracks |
-| Scout (Reaper) | (SC2) | (SC2) | 1 | (SC2) | (SC2) | (SC2) | (SC2) | (SC2) | (SC2) | Light, Bio | ground | Barracks |
-| Siege (Siege Tank) | (SC2) | (SC2) | 3 | (SC2) | (SC2) | (SC2) | splash | (SC2) | (SC2) | Armored, Mech | ground | Factory |
-| Light vehicle (Hellion) | (SC2) | (SC2) | 2 | (SC2) | (SC2) | (SC2) | +vs Light, splash | (SC2) | (SC2) | Light, Mech | ground | Factory |
-| Air harasser (Banshee) | (SC2) | (SC2) | 3 | (SC2) | (SC2) | (SC2) | (SC2) | (SC2) | (SC2) | Light, Mech | ground | Starport |
-| Support (Medivac) | (SC2) | (SC2) | 2 | (SC2) | (SC2) | (SC2) | heal | — | — | Armored, Mech | — | Starport |
-| Capital (Battlecruiser) | (SC2) | (SC2) | 6 | (SC2) | (SC2) | (SC2) | (SC2) | (SC2) | (SC2) | Armored, Massive, Mech | grnd+air | Starport |
+| Unit | Minerals | Gas | Supply | Build time | HP | Attack | Range | Cooldown | Sight | Produced by |
+|------|----------|-----|--------|-----------|----|--------|-------|----------|-------|-------------|
+| Worker (Probe) | 50 | 0 | 1 | 12 s | 40 | 5 | melee | 1.5 s | 8 | Nexus |
+| Zealot | 100 | 0 | 2 | 27 s | 150 | 16 | melee | 1.2 s | 9 | Gateway |
+| Stalker | 125 | 50 | 2 | 32 s | 160 | 13 | 6 | 1.4 s | 10 | Gateway |
 
-## Buildings (fill from Liquipedia LotV building stats)
+_Later: air units, support/heal, attribute counters, shields._
 
-| Building | Minerals | Gas | Build time | HP | Supply provided | Requires | Produces |
-|----------|----------|-----|-----------|----|-----|----------|----------|
-| Base/Townhall | (SC2) | 0 | (SC2) | (SC2) | +15 | — | Workers |
-| Supply structure | (SC2) | 0 | (SC2) | (SC2) | +8 | — | — |
-| Gas extractor | (SC2) | 0 | (SC2) | (SC2) | 0 | geyser | — |
-| Barracks | (SC2) | 0 | (SC2) | (SC2) | 0 | Base | tier-1 infantry |
-| Factory | (SC2) | (SC2) | (SC2) | (SC2) | 0 | Barracks | vehicles/siege |
-| Starport | (SC2) | (SC2) | (SC2) | (SC2) | 0 | Factory | air |
-| Tech/upgrade bldg | (SC2) | 0 | (SC2) | (SC2) | 0 | Base | upgrades |
-| Static defense | (SC2) | (SC2) | (SC2) | (SC2) | 0 | (varies) | — |
+## Buildings (implemented — Protoss-style)
+
+Mirrors `game/sim/constants.ts: BUILDING_STATS`. Footprints scaled down from SC2 for the 64×64 grid. Power radius = 6.5 tiles.
+
+| Building | Minerals | Build time | HP | Footprint | Supply | Power | Requires | Produces |
+|----------|----------|-----------|----|-----------|--------|-------|----------|----------|
+| Nexus | 400 | 60 s | 2000 | 2×2 | +15 | — | — | Worker |
+| Pylon | 100 | 18 s | 300 | 1×1 | +8 | **projects** | — | — |
+| Gateway | 150 | 30 s | 500 | 2×2 | 0 | needs power | Pylon | Zealot, Stalker |
+| Photon Cannon | 150 | 25 s | 300 | 1×1 | 0 | needs power | Pylon | static defense (20 dmg, range 7, 1.25 s) |
 
 ## Upgrades (MVP minimal)
 
@@ -81,3 +75,4 @@ Every gameplay doc references this file:
   - Picked deposit totals: mineral **1500**, geyser **2250** (from the SC2 ranges).
   - Tuned (no SC2 source): `WORKER_SPEED` **3.0** tiles/s, `MINERAL_GATHER_TIME_S` / `GAS_GATHER_TIME_S` **2.0 s**, `WALL_CLEAR_MINERAL_BONUS` **5**, `STARTING_WORKERS` **6**, tick **16 Hz**, map **64×64**.
   - `BASE_FOOTPRINT` scaled to **2×2** (SC2's 5×5 is too large on a 64-grid). Worker HP/cost/build time kept at SC2 values (45 / 50 min / 12 s).
+- **2026-05-28** — Pivoted to a **Protoss-style** faction; see the Units/Buildings tables above (Nexus/Pylon/Gateway/Photon Cannon, Zealot/Stalker). Added `POWER_RADIUS` 6.5, `START_POCKET_RADIUS` 3 (tighter start). Worker HP set to 40 (Probe-ish). All values live in `UNIT_STATS` / `BUILDING_STATS` in `game/sim/constants.ts`.

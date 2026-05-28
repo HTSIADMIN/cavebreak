@@ -39,4 +39,4 @@ MVP can ship with just **Hidden** + **Visible** if the dim "explored memory" lay
 
 ## Implementation Notes
 
-- _(none yet)_
+- **2026-05-28** — Implemented in `fog.ts`: per-player visibility grid (0 hidden / 1 explored / 2 visible), recomputed every 4 ticks from unit + building sight radii with a Bresenham LOS that's blocked by `ROCK`/`BOUNDARY`/`MINERAL`. The renderer blacks out hidden tiles, dims explored ones, and hides enemy entities outside current vision (also on the minimap). Currently computed only for the local player (player 0) and stored on `GameState.visibility`; becomes per-player server state under multiplayer.

@@ -55,4 +55,4 @@ Each grid cell stores exactly one terrain type (plus occupancy info — what uni
 
 ## Implementation Notes
 
-- _(none yet)_
+- **2026-05-28** — `mapgen.ts`: 64×64, point-symmetric 2-player layout. **Start pocket tightened** to 7×7 (`START_POCKET_RADIUS = 3`). Each start has a natural mineral line + a geyser adjacent to the pocket. **Scattered, point-symmetric expansion fields** (seeded RNG) are embedded in the rock away from the starts to reward mining outward. Depleted mineral tiles convert to `FLOOR`.

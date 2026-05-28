@@ -46,4 +46,4 @@ Combat resolution copies StarCraft 2's model: real-time, attribute-based damage 
 
 ## Implementation Notes
 
-- _(none yet)_
+- **2026-05-28** — Implemented in `world.ts`: HP-only damage (no armor/shield yet), attack cooldown → DPS, range (melee ≤ 0.6 vs ranged). Units auto-acquire the nearest enemy within **sight**, chase into range (A* repath throttled by `repathCd`), and fire on cooldown; `attack` (focus-fire) and `attackMove` commands. Photon Cannons auto-fire. **Win condition**: a player with no buildings is defeated; last standing wins (`checkWinCondition`). Deferred: bonus-vs-attribute counters, strict vision-gated targeting (acquisition is sight-bounded, a close approximation).
