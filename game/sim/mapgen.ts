@@ -34,23 +34,20 @@ interface StartPlan {
 // Player 0's start, hand-authored in the top-left. Player 1 mirrors it (point symmetry).
 // No starting resources — they must be mined toward and found (docs/map-terrain.md).
 function plan0(): StartPlan {
-  const cx = 12;
-  const cy = 12;
+  // 2x2 Nexus centered in a 4x4 pocket (a `START_POCKET_RADIUS`-thick ring around it).
+  const nx = 11;
+  const ny = 11; // Nexus tiles (11,11)..(12,12)
   const r = START_POCKET_RADIUS;
   const floors: Vec2[] = [];
-  for (let y = cy - r; y <= cy + r; y++) {
-    for (let x = cx - r; x <= cx + r; x++) floors.push({ x, y });
+  for (let y = ny - r; y <= ny + 1 + r; y++) {
+    for (let x = nx - r; x <= nx + 1 + r; x++) floors.push({ x, y });
   }
   return {
     floors,
-    nexusTopLeft: { x: cx - 1, y: cy - 1 },
+    nexusTopLeft: { x: nx, y: ny },
     workers: [
-      { x: cx - 2, y: cy - 2 },
-      { x: cx + 2, y: cy - 2 },
-      { x: cx - 2, y: cy + 2 },
-      { x: cx + 2, y: cy + 2 },
-      { x: cx - 2, y: cy },
-      { x: cx + 2, y: cy },
+      { x: nx - r, y: ny - r },
+      { x: nx + 1 + r, y: ny + 1 + r },
     ].slice(0, STARTING_WORKERS),
   };
 }
@@ -132,7 +129,6 @@ export function createInitialState(seed = 1337): GameState {
         path: null,
         moveGoal: null,
         mineTile: null,
-        mineProgress: 0,
         depositId: null,
         carrying: null,
         gatherProgress: 0,
@@ -253,5 +249,6 @@ export function createInitialState(seed = 1337): GameState {
     winner: null,
     visibility: new Uint8Array(MAP_W * MAP_H),
     events: [],
+    wallProgress: new Map(),
   };
 }

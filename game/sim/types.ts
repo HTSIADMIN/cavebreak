@@ -90,7 +90,6 @@ export interface Unit {
   moveGoal: Vec2 | null;
 
   mineTile: Vec2 | null;
-  mineProgress: number;
 
   depositId: number | null;
   carrying: { kind: ResourceKind; amount: number } | null;
@@ -157,6 +156,9 @@ export interface GameState {
   visibility: Uint8Array;
   // Transient per-step events for the view to animate; the view drains them each frame.
   events: GameEvent[];
+  // Shared wall-mining progress keyed by tile index (y*w+x), 0..1. Every adjacent
+  // miner contributes its rate, so multiple units break a wall faster.
+  wallProgress: Map<number, number>;
 }
 
 export type Command =

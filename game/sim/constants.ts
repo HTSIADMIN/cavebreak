@@ -25,12 +25,12 @@ export const GAS_GATHER_TIME_S = 2.0;
 
 // --- Cave-specific ---
 export const WALL_CLEAR_MINERAL_BONUS = 5;
-export const STARTING_WORKERS = 6;
+export const STARTING_WORKERS = 2;
 
 // --- Map ---
 export const MAP_W = 64;
 export const MAP_H = 64;
-export const START_POCKET_RADIUS = 2; // tightened — you start nearly walled in
+export const START_POCKET_RADIUS = 1; // 1-tile ring around the 2x2 Nexus → a 4x4 pocket
 
 // --- Power & shields ---
 export const POWER_RADIUS = 6.5;

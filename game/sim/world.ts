@@ -350,12 +350,17 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       const res = approach(s, u, adj, nearestAdjacentFloor(s.grid, t.x, t.y, u), dt);
       if (res === "blocked") return becomeIdle(u);
       if (res !== "arrived") return;
-      u.mineProgress += dt;
-      if (u.mineProgress >= UNIT_STATS[u.type].wallMineTime) {
+      // Cooperative: every adjacent miner adds its rate to the shared tile progress.
+      const key = t.y * s.grid.width + t.x;
+      const prog = (s.wallProgress.get(key) ?? 0) + dt / UNIT_STATS[u.type].wallMineTime;
+      if (prog >= 1) {
+        s.wallProgress.delete(key);
         setTile(s.grid, t.x, t.y, TileType.FLOOR);
         s.players[u.owner].minerals += WALL_CLEAR_MINERAL_BONUS;
         pushEvent(s, { kind: "wallBreak", x: t.x + 0.5, y: t.y + 0.5 });
         becomeIdle(u);
+      } else {
+        s.wallProgress.set(key, prog);
       }
       return;
     }
@@ -498,7 +503,6 @@ function spawnUnit(s: GameState, b: Building, type: UnitType) {
     path: null,
     moveGoal: null,
     mineTile: null,
-    mineProgress: 0,
     depositId: null,
     carrying: null,
     gatherProgress: 0,
@@ -754,7 +758,6 @@ export function applyCommand(s: GameState, cmd: Command): void {
         if (!u) continue; // any unit can mine walls (combat units faster)
         u.state = "mining_wall";
         u.mineTile = { x: cmd.tx, y: cmd.ty };
-        u.mineProgress = 0;
         u.depositId = null;
         u.carrying = null;
         u.targetId = null;
@@ -919,7 +922,6 @@ function digToward(s: GameState, units: Unit[], start: Vec2, target: Vec2, crew:
     if (!w) break;
     w.state = "mining_wall";
     w.mineTile = { x: tile.x, y: tile.y };
-    w.mineProgress = 0;
     w.depositId = null;
     w.carrying = null;
     w.targetId = null;

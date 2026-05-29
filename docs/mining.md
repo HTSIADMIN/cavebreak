@@ -13,7 +13,7 @@ There are **two things workers do to rock**, and they must not be confused:
 - Mining takes **time** — target ~**30 seconds** per wall tile as a starting value (tune in [balance-data.md](./balance-data.md)). This is deliberately slow to create the micromanagement/pacing the game is built around.
 - On completion the `ROCK` tile becomes `FLOOR`.
 - **Design decision (open):** does clearing a wall yield a small mineral bonus, or nothing? Recommendation: a *small* one-time mineral trickle to make early expansion feel rewarding, but keep the main economy on dedicated `MINERAL` deposits so players don't just strip-mine the whole map for income.
-- Multiple workers on the same wall could stack to speed it up (optional; simplest MVP = one worker per wall tile).
+- Multiple miners on the same wall **stack to speed it up** (implemented): progress is shared per tile and every adjacent miner contributes its own rate, so two workers clear a wall in ~half the time, and faster combat units stack their rates too.
 
 ## Resource Harvesting (StarCraft-style)
 
@@ -51,3 +51,4 @@ A worker can be in one of these states: `idle`, `moving`, `mining_wall` (expansi
   - **Depleted mineral tile becomes `FLOOR`** (the deposit was embedded in rock, so clearing it opens cave); depleted geysers leave the tile as `GEYSER`.
   - **Gas (temporary MVP simplification):** workers can harvest a `GEYSER` directly; the extractor building is deferred. Starting workers auto-assign to the nearest mineral patch on spawn.
 - **2026-05-28 (depth pass)** — **Wall-mining is now fast and tiered, and any unit can do it**: per-unit `UNIT_STATS.wallMineTime` — Worker **10 s**, Zealot **5 s**, Stalker **3 s** (combat units carve faster). A `wallBreak` event drives a break animation; crack intensity tracks progress. **Golden** deposits yield more per trip (8 min / 6 gas) and hold more. No starting resources — workers begin idle and must dig out to find deposits (see [map-terrain.md](./map-terrain.md)).
+- **2026-05-28 (cooperative mining)** — Resolved the "multiple workers stack" open item. Wall progress is now **shared per tile**, not per unit: `GameState.wallProgress` is a `Map<tileIndex, number>` (0..1). Each tick, every miner adjacent to a tile adds `dt / wallMineTime` to that tile's entry; the wall breaks when the shared total reaches 1 and the entry is deleted. Two workers therefore clear a 10 s wall in ~5 s, and mixed crews sum their differing rates. The renderer reads `wallProgress` directly to draw cracks. Removed the per-unit `Unit.mineProgress` field.

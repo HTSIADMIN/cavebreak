@@ -26,13 +26,13 @@
 
 | Param | Starting value | Notes |
 |-------|----------------|-------|
-| Wall mine time (per `ROCK` tile) | **Worker 10 s · Zealot 5 s · Stalker 3 s** | Per-unit `UNIT_STATS.wallMineTime`; combat units dig faster. |
+| Wall mine time (per `ROCK` tile) | **Worker 10 s · Zealot 5 s · Stalker 3 s** | Per-unit `UNIT_STATS.wallMineTime`; combat units dig faster. **Cooperative** — every adjacent miner adds its rate, so a wall breaks proportionally faster. |
 | Wall clear mineral bonus | **5** | Trickle on clearing a wall (`WALL_CLEAR_MINERAL_BONUS`). |
-| Starting pocket | **5×5** (`START_POCKET_RADIUS` 2) | Tight, nearly walled in. |
+| Starting pocket | **4×4** (`START_POCKET_RADIUS` 1) | 1-tile ring around a centered 2×2 Nexus; you start nearly walled in. |
 | Starting resources | **none — findable only** | Scattered in rock; some a short dig from each base, golden further out. |
 | Golden minerals | 8 / trip · 2,500 total | High-yield (SC2 "rich minerals"). Normal: 5/trip · 1,500. |
 | Golden gas | 6 / trip · 3,500 total | High-yield geyser. Normal: 4/trip · 2,250. |
-| Starting workers | 6 | |
+| Starting workers | 2 | |
 | Tile size (render) | 32 px | Cosmetic. |
 | Tick rate (sim) | 10–20 Hz | See [multiplayer.md](./multiplayer.md). |
 
@@ -84,3 +84,4 @@ Every gameplay doc references this file:
 - **2026-05-28** — Pivoted to a **Protoss-style** faction; see the Units/Buildings tables above (Nexus/Pylon/Gateway/Photon Cannon, Zealot/Stalker). Added `POWER_RADIUS` 6.5, `START_POCKET_RADIUS` 3 (tighter start). Worker HP set to 40 (Probe-ish). All values live in `UNIT_STATS` / `BUILDING_STATS` in `game/sim/constants.ts`.
 - **2026-05-28 (update)** — Added **plasma shields** (HP split into hp+shields; `SHIELD_REGEN_DELAY` 5 s, `SHIELD_REGEN_RATE` 2/s), **armor** + **attributes** with bonus damage (Stalker +5 vs Armored), **Cybernetics Core** + **Forge**, and the `UPGRADES` table (Ground Weapons/Armor, 100/150/200 min · 30/45/60 s). See the updated tables above.
 - **2026-05-28 (depth pass)** — **Per-unit wall-mine times** `UNIT_STATS.wallMineTime` (Worker 10 / Zealot 5 / Stalker 3 s); any unit can mine. **`START_POCKET_RADIUS` 2** (5×5, no starting resources). **Golden** resource constants (`GOLDEN_*`: 8 min / 6 gas per trip, 2,500 / 3,500 totals). Removed `WALL_MINE_TIME_S`. See the Cave-Specific table.
+- **2026-05-28 (start + co-op mining)** — **`STARTING_WORKERS` 6 → 2** and **`START_POCKET_RADIUS` 2 → 1**: the pocket is now a **4×4** with the 2×2 Nexus centered and a 1-tile floor ring. **Cooperative wall mining** — progress is shared per tile (`GameState.wallProgress: Map<tileIndex, number>`, 0..1); each adjacent miner adds `dt / wallMineTime` per tick, so two workers clear a 10 s wall in ~5 s and combat units stack their faster rates. Removed `Unit.mineProgress`.

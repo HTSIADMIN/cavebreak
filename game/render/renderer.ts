@@ -191,13 +191,14 @@ export function renderGame(
     }
   }
 
-  // Mining cracks on walls being dug (action animation).
-  for (const u of state.units) {
-    if (u.state !== "mining_wall" || !u.mineTile) continue;
-    if (!tileVisible(u.mineTile.x, u.mineTile.y)) continue;
-    const frac = Math.min(1, u.mineProgress / 10);
-    const cx = cam.worldToScreenX(u.mineTile.x + 0.5);
-    const cy = cam.worldToScreenY(u.mineTile.y + 0.5);
+  // Mining cracks on walls being dug (action animation), keyed by shared tile progress.
+  for (const [key, prog] of state.wallProgress) {
+    const tx = key % grid.width;
+    const ty = (key / grid.width) | 0;
+    if (!tileVisible(tx, ty)) continue;
+    const frac = Math.min(1, prog);
+    const cx = cam.worldToScreenX(tx + 0.5);
+    const cy = cam.worldToScreenY(ty + 0.5);
     ctx.strokeStyle = `rgba(255,228,180,${0.3 + 0.5 * frac})`;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
