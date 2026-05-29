@@ -70,6 +70,24 @@ Mirrors `game/sim/constants.ts: BUILDING_STATS`. Footprints scaled down from SC2
 
 Plasma shields: regen **2/s** starting **5 s** after last taking damage (`SHIELD_REGEN_*`).
 
+## AI Difficulties (decision quality only — no bonuses)
+
+`AI_PROFILES` in `game/sim/world.ts`. Every player starts identical (same pocket, 2 workers, 50 minerals); difficulty changes only *how well* the AI plays — **no resource, vision, or stat bonuses**.
+
+| Param | Easy | Medium | Hard | Effect |
+|-------|------|--------|------|--------|
+| Decision cadence | 28 ticks (~0.6/s) | 14 (~1.1/s) | 8 (2/s) | Reaction speed (APM-like) |
+| Worker cap | 11 | 16 | 20 | Economy size |
+| Gas workers | 0 | 2 | 4 | Fuels Stalkers |
+| Gateways | 1 | 2 | 4 | Army production throughput |
+| Forge upgrades | — | yes | yes | +weapon/+armor |
+| Stalkers | — | yes | yes | Ranged, +vs Armored |
+| Cannons | 0 | 1 | 1 | Static defense |
+| Attack at army | 10 | 13 | 17 | Mass before committing |
+| Focus-fire micro | — | — | yes | Kills faster, less return fire |
+
+Verified 1v1 with both seats AI (no bonuses): **Hard > Medium > Easy**. The build room the AI excavates scales with its build plan (`24 + gateways·4 + forge·6`) so higher tiers have space for their extra structures; pylons are placed proactively to extend the power field (production buildings need power), preventing the AI from banking unused resources on a single Gateway.
+
 ## Related Systems
 
 Every gameplay doc references this file:

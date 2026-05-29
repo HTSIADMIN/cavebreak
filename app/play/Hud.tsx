@@ -18,6 +18,7 @@ export interface HudData {
   supplyMax: number;
   winner: number | null;
   localPlayer: number;
+  localDefeated?: boolean;
   title: string;
   sub?: string;
   hint?: string;
@@ -86,13 +87,18 @@ export function CommandCard({ actions, onAction }: { actions: HudAction[]; onAct
 export function WinnerBanner({
   winner,
   localPlayer,
+  localDefeated,
   onRestart,
+  onMenu,
 }: {
   winner: number | null;
   localPlayer: number;
+  localDefeated?: boolean;
   onRestart?: () => void;
+  onMenu?: () => void;
 }) {
-  if (winner === null) return null;
+  const over = winner !== null || localDefeated;
+  if (!over) return null;
   const won = winner === localPlayer;
   return (
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -100,12 +106,23 @@ export function WinnerBanner({
         <p className={`text-5xl font-bold tracking-tight ${won ? "text-cyan-300" : "text-red-300"}`}>
           {won ? "Victory" : "Defeat"}
         </p>
-        <button
-          onClick={onRestart}
-          className="mt-3 rounded-full bg-zinc-100 px-5 py-2 text-sm font-semibold text-zinc-900 transition-colors hover:bg-white"
-        >
-          Play again
-        </button>
+        {!won && winner !== null && <p className="mt-1 text-sm text-zinc-400">The cave belongs to another.</p>}
+        <div className="mt-4 flex justify-center gap-2">
+          <button
+            onClick={onRestart}
+            className="rounded-full bg-zinc-100 px-5 py-2 text-sm font-semibold text-zinc-900 transition-colors hover:bg-white"
+          >
+            Play again
+          </button>
+          {onMenu && (
+            <button
+              onClick={onMenu}
+              className="rounded-full border border-zinc-600 px-5 py-2 text-sm font-semibold text-zinc-200 transition-colors hover:bg-zinc-800"
+            >
+              New game
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

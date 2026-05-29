@@ -8,11 +8,14 @@ import {
   canPlaceBuilding,
   Command,
   createInitialState,
+  Difficulty,
   DT,
   GameState,
   getTile,
   MAP_H,
+  MAP_LIST,
   MAP_W,
+  MatchSetup,
   step,
   TICK_RATE_HZ,
   TileType,
@@ -28,6 +31,12 @@ import { CommandCard, HudAction, HudData, SelectionPanel, TopBar, WinnerBanner }
 const LOCAL_PLAYER = 0;
 const PAN_SPEED = 24;
 const DRAG_THRESHOLD = 5;
+
+// Dev-only headless handle: build any setup and fast-forward without the lobby/UI.
+// (Stripped from production builds.)
+if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
+  (window as unknown as Record<string, unknown>).__cbsim = { createInitialState, step, DT };
+}
 
 const EMPTY_HUD: HudData = {
   minerals: 0, gas: 0, supplyUsed: 0, supplyMax: 0,
@@ -149,7 +158,99 @@ function stateLabel(st: string): string {
   return map[st] ?? st;
 }
 
-function Game({ onRestart }: { onRestart: () => void }) {
+const DIFFICULTIES: { id: Difficulty; label: string; blurb: string }[] = [
+  { id: "easy", label: "Easy", blurb: "Slow to react, few workers, one Gateway. Builds a small force and pushes late." },
+  { id: "medium", label: "Medium", blurb: "Solid macro: gas + Stalkers, upgrades, defensive cannons, steady pressure." },
+  { id: "hard", label: "Hard", blurb: "Greedy worker count, mass Gateways, full tech, and focus-fire micro. Relentless." },
+];
+
+// Pre-game lobby: choose a map, how many AI opponents, and their difficulty.
+function SetupScreen({ onStart }: { onStart: (s: MatchSetup) => void }) {
+  const [mapId, setMapId] = useState(MAP_LIST[0].id);
+  const [opponents, setOpponents] = useState(1);
+  const [difficulty, setDifficulty] = useState<Difficulty>("medium");
+  const map = MAP_LIST.find((m) => m.id === mapId) ?? MAP_LIST[0];
+  const maxOpp = map.maxPlayers - 1;
+  const opp = Math.min(opponents, maxOpp);
+
+  const cardCls = (on: boolean) =>
+    `rounded-lg border p-3 text-left transition-colors ${
+      on ? "border-cyan-400 bg-cyan-500/10" : "border-zinc-800 bg-zinc-900 hover:bg-zinc-800"
+    }`;
+
+  return (
+    <div className="flex min-h-screen w-screen flex-col items-center justify-center gap-7 bg-black px-6 py-10 text-zinc-100">
+      <div className="text-center">
+        <h1 className="text-3xl font-bold tracking-tight">Cavebreak</h1>
+        <p className="mt-1 text-sm text-zinc-500">Sealed in rock. Mine out, tech up, break through.</p>
+      </div>
+
+      <section className="w-full max-w-3xl">
+        <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">Map</h2>
+        <div className="grid grid-cols-3 gap-3">
+          {MAP_LIST.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => {
+                setMapId(m.id);
+                if (opponents > m.maxPlayers - 1) setOpponents(m.maxPlayers - 1);
+              }}
+              className={cardCls(m.id === mapId)}
+            >
+              <p className="text-sm font-semibold">{m.name}</p>
+              <p className="mt-1 text-xs text-zinc-400">{m.description}</p>
+              <p className="mt-2 text-[10px] uppercase tracking-wider text-zinc-500">Up to {m.maxPlayers} players</p>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="w-full max-w-3xl">
+        <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">Opponents</h2>
+        <div className="flex items-center gap-2">
+          {Array.from({ length: maxOpp }, (_, i) => i + 1).map((n) => (
+            <button
+              key={n}
+              onClick={() => setOpponents(n)}
+              className={`h-10 w-12 rounded-lg border text-sm font-semibold transition-colors ${
+                opp === n ? "border-cyan-400 bg-cyan-500/10" : "border-zinc-800 bg-zinc-900 hover:bg-zinc-800"
+              }`}
+            >
+              {n}
+            </button>
+          ))}
+          <span className="ml-2 text-xs text-zinc-500">
+            {opp} AI {opp === 1 ? "opponent" : "opponents"} · {opp + 1} players total
+          </span>
+        </div>
+      </section>
+
+      <section className="w-full max-w-3xl">
+        <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">Difficulty</h2>
+        <div className="grid grid-cols-3 gap-3">
+          {DIFFICULTIES.map((d) => (
+            <button key={d.id} onClick={() => setDifficulty(d.id)} className={cardCls(d.id === difficulty)}>
+              <p className="text-sm font-semibold">{d.label}</p>
+              <p className="mt-1 text-xs text-zinc-400">{d.blurb}</p>
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-[11px] text-zinc-600">
+          Difficulty changes only how well the AI plays — never resource, vision, or stat bonuses.
+        </p>
+      </section>
+
+      <button
+        onClick={() => onStart({ mapId, aiDifficulties: Array(opp).fill(difficulty) })}
+        className="rounded-full bg-cyan-400 px-8 py-3 text-base font-bold text-zinc-950 transition-colors hover:bg-cyan-300"
+      >
+        Start game
+      </button>
+    </div>
+  );
+}
+
+function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () => void; onMenu: () => void }) {
   const [hud, setHud] = useState<HudData>(EMPTY_HUD);
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -217,7 +318,7 @@ function Game({ onRestart }: { onRestart: () => void }) {
   }
 
   useEffect(() => {
-    const state = createInitialState();
+    const state = createInitialState(setup);
     stateRef.current = state;
     const cam = new Camera();
     camRef.current = cam;
@@ -486,7 +587,7 @@ function Game({ onRestart }: { onRestart: () => void }) {
       actionsRef.current = selInfo.actions;
       setHud({
         minerals: p.minerals, gas: p.gas, supplyUsed: p.supplyUsed, supplyMax: p.supplyMax,
-        winner: state.winner, localPlayer: LOCAL_PLAYER,
+        winner: state.winner, localPlayer: LOCAL_PLAYER, localDefeated: p.defeated,
         title: selInfo.title, sub: selInfo.sub, hint: selInfo.hint, actions: selInfo.actions,
       });
     };
@@ -585,7 +686,13 @@ function Game({ onRestart }: { onRestart: () => void }) {
       <div ref={wrapRef} className="relative flex-1 overflow-hidden">
         <canvas ref={canvasRef} className="block h-full w-full" onContextMenu={(e) => e.preventDefault()} />
         <TopBar {...hud} />
-        <WinnerBanner winner={hud.winner} localPlayer={hud.localPlayer} onRestart={onRestart} />
+        <WinnerBanner
+          winner={hud.winner}
+          localPlayer={hud.localPlayer}
+          localDefeated={hud.localDefeated}
+          onRestart={onRestart}
+          onMenu={onMenu}
+        />
       </div>
       <div className="flex h-44 items-stretch border-t border-zinc-800 bg-zinc-950">
         <div className="p-2">
@@ -606,7 +713,26 @@ function Game({ onRestart }: { onRestart: () => void }) {
 }
 
 export default function Match() {
-  // Bumping the key remounts Game with a fresh sim — instant restart, no reload.
+  // Choose a setup once, then play. Bumping `runId` remounts Game for an instant
+  // rematch on the same settings; "New game" clears the setup back to the lobby.
+  const [setup, setSetup] = useState<MatchSetup | null>(null);
   const [runId, setRunId] = useState(0);
-  return <Game key={runId} onRestart={() => setRunId((n) => n + 1)} />;
+  if (!setup) {
+    return (
+      <SetupScreen
+        onStart={(s) => {
+          setSetup(s);
+          setRunId((n) => n + 1);
+        }}
+      />
+    );
+  }
+  return (
+    <Game
+      key={runId}
+      setup={setup}
+      onRestart={() => setRunId((n) => n + 1)}
+      onMenu={() => setSetup(null)}
+    />
+  );
 }

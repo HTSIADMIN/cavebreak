@@ -36,6 +36,15 @@ Two common approaches — pick based on effort vs. bandwidth:
 
 - **No account system** beyond a display name needed to join — keep friction near zero.
 
+## Single-Player & AI Opponents (shipped)
+
+Before netcode, the game ships as **local single-player vs. AI**, and the sim already supports **up to 4 players** (free-for-all). A pre-game setup screen (`app/play/Match.tsx`) chooses the **map**, the **number of AI opponents** (1–3, capped by the map), and a **difficulty**.
+
+- **Win/lose:** a player is eliminated when they hold no buildings; the last player standing wins (`checkWinCondition`, already N-player). In a FFA the human sees a Defeat overlay the moment they're eliminated even if the AIs fight on.
+- **AI difficulty is decision quality only — never bonuses.** Every player (human and AI) starts identical: same 4×4 pocket, 2 workers, 50 minerals, no resource/vision/stat edge. Difficulty changes *how well* the AI plays:
+  - **Decision cadence** (reaction speed, ~like APM), **worker count**, **number of Gateways** (army throughput), whether it takes **gas + Stalkers**, **Forge upgrades**, **defensive cannons**, the **army size it masses before committing**, and **focus-fire micro** (Hard).
+  - Key tuning lesson: a small army dribbled into a defended base just dies, so harder AIs **mass a larger force before attacking** (higher attack threshold) rather than poking early. Verified 1v1 with both sides AI: **Hard > Medium > Easy** with no bonuses.
+
 ## Where the Sim Runs
 
 - For Vercel (serverless) the long-lived tick loop doesn't fit a standard serverless function well. Options:
@@ -55,3 +64,4 @@ Two common approaches — pick based on effort vs. bandwidth:
 - **2026-05-28** — Supabase side scaffolded (still local, no netcode yet): `lib/supabase/client.ts` (browser client, anon key, Realtime) and a lobby migration (`lobbies` + `lobby_players`, permissive anon RLS, Realtime publication) per the lobby flow above. Env via `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` (see `.env.example`). DB home is the Supabase project `faexpupzpyubdcbooypo`.
 - **2026-05-28** — Wired the **Supabase↔GitHub integration**: added `supabase/config.toml` and renamed the migration to the timestamped convention (`supabase/migrations/20260527000000_lobbies.sql`), made idempotent so re-applies are safe. Migrations now deploy automatically on push to `main`; no manual `db push` needed. Verify applied tables via the dashboard or a `cavebreak`-rooted MCP session.
 - **2026-05-28** — Wrote the **full match/netcode schema** (`supabase/migrations/20260527000100_matches.sql`, idempotent): `matches`, `match_players`, `match_commands` (command/lockstep log + replays), `match_snapshots` (state-broadcast + reconnect). Realtime + permissive anon RLS. **Schema only — the game client is not wired to it yet** (single-player local sim remains authoritative). When netcode lands, route `applyCommand`/`step` through the server and these tables.
+- **2026-05-28 (AI difficulties + 4 players + maps)** — Shipped local **single-player vs AI** with the model above. `runAI(s, owner, dt)` is generalized to run for **every** AI player each tick (was hardcoded to player 1); `step()` loops `players.filter(isAI)`. Added `Difficulty` (`easy`/`medium`/`hard`) on `Player` and `MatchSetup` (`mapId`, `aiDifficulties[]`) — see [balance-data.md](./balance-data.md) for the AI profile table. New `game/sim/maps.ts` map-descriptor system (see [map-terrain.md](./map-terrain.md)): **Cavern Duel** (2p), **Four Corners** (4p), **Crater** (4p, circular). A lobby screen on `/play` picks map/opponents/difficulty and a Defeat/Victory banner with Play-again / New-game. Verified: difficulty ordering Hard>Medium>Easy (1v1, no bonuses) and 4-player FFA resolving to one winner on both 4p maps.

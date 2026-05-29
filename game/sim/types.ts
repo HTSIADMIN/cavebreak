@@ -26,16 +26,29 @@ export interface PlayerUpgrades {
   groundArmor: number; // 0..3
 }
 
+// AI strength tiers. Difficulty comes ENTIRELY from decision quality (build order,
+// expansion, army size/comp, upgrades, micro, decision cadence) — never from resource,
+// vision, or stat bonuses (docs/multiplayer.md).
+export type Difficulty = "easy" | "medium" | "hard";
+
 export interface Player {
   id: PlayerId;
   color: string;
   isAI: boolean;
+  difficulty?: Difficulty; // set for AI players only
   minerals: number;
   gas: number;
   supplyUsed: number;
   supplyMax: number;
   defeated: boolean;
   upgrades: PlayerUpgrades;
+}
+
+// Chosen on the pre-game setup screen and passed to createInitialState.
+export interface MatchSetup {
+  mapId: string;
+  aiDifficulties: Difficulty[]; // one entry per AI opponent; seats 1..N
+  seed?: number;
 }
 
 export type ResourceKind = "mineral" | "gas";

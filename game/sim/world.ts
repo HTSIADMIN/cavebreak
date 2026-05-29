@@ -23,6 +23,7 @@ import {
   BuildingType,
   Command,
   Deposit,
+  Difficulty,
   GameEvent,
   GameState,
   PlayerId,
@@ -1040,15 +1041,80 @@ function digToward(s: GameState, units: Unit[], start: Vec2, target: Vec2, crew:
   }
 }
 
-function runAI(s: GameState, _dt: number) {
-  if (s.tick % 16 !== 0) return; // ~once/second
-  const owner: PlayerId = 1;
+// Difficulty is decision quality ONLY — no resource/vision/stat bonuses (docs/multiplayer.md).
+// Easy: slow cadence, few workers, one Gateway, no tech/micro, big late clumsy push.
+// Hard: fast cadence, heavy worker + Gateway count, full tech, gas/Stalkers, focus-fire,
+// early continuous pressure. Medium sits between.
+interface AIProfile {
+  cadence: number; // ticks between macro decisions (16 = 1/s); lower = quicker reactions
+  workerCap: number;
+  gasWorkers: number;
+  gatewayCap: number;
+  buildForge: boolean;
+  buildCannons: number;
+  useStalkers: boolean;
+  attackArmy: number; // army size before pushing out
+  micro: boolean; // focus-fire the lowest-HP enemy in range
+}
+const AI_PROFILES: Record<Difficulty, AIProfile> = {
+  // Strength is set by army quality/quantity + reaction speed, not bonuses. Crucially the
+  // attacker must MASS before committing (small dribbles die against a defended base), so
+  // attackArmy rises with difficulty: harder AIs hit later but with an overwhelming force.
+  easy: { cadence: 28, workerCap: 11, gasWorkers: 0, gatewayCap: 1, buildForge: false, buildCannons: 0, useStalkers: false, attackArmy: 10, micro: false },
+  medium: { cadence: 14, workerCap: 16, gasWorkers: 2, gatewayCap: 2, buildForge: true, buildCannons: 1, useStalkers: true, attackArmy: 13, micro: false },
+  hard: { cadence: 8, workerCap: 20, gasWorkers: 4, gatewayCap: 4, buildForge: true, buildCannons: 1, useStalkers: true, attackArmy: 17, micro: true },
+};
+
+// Nearest enemy structure to `from` (prefers a Nexus), skipping defeated players. Used to
+// pick a target main in free-for-alls — the AI attacks whoever is closest.
+function nearestEnemyBuilding(s: GameState, owner: PlayerId, from: Vec2): Building | null {
+  const pick = (pred: (b: Building) => boolean): Building | null => {
+    let best: Building | null = null;
+    let bd = Infinity;
+    for (const b of s.buildings) {
+      if (b.owner === owner || s.players[b.owner].defeated || !pred(b)) continue;
+      const c = buildingCenter(b);
+      const d = (c.x - from.x) ** 2 + (c.y - from.y) ** 2;
+      if (d < bd) {
+        bd = d;
+        best = b;
+      }
+    }
+    return best;
+  };
+  return pick((b) => b.type === "nexus") ?? pick(() => true);
+}
+
+// Focus fire: each engaged combat unit retargets the lowest-HP enemy unit in its range,
+// so the army kills things faster (and thus takes less return fire). Hard AI only.
+function aiMicro(s: GameState, owner: PlayerId) {
+  for (const u of s.units) {
+    if (u.owner !== owner || u.type === "worker" || u.state !== "attacking") continue;
+    const range = UNIT_STATS[u.type].range;
+    let best: number | null = null;
+    let bestHp = Infinity;
+    for (const e of s.units) {
+      if (e.owner === owner || e.hp <= 0 || !inWeaponRange(u, e, range)) continue;
+      const hp = e.hp + e.shields;
+      if (hp < bestHp) {
+        bestHp = hp;
+        best = e.id;
+      }
+    }
+    if (best !== null && best !== u.targetId) u.targetId = best;
+  }
+}
+
+function runAI(s: GameState, owner: PlayerId, _dt: number) {
   const p = s.players[owner];
   if (p.defeated) return;
+  const prof = AI_PROFILES[p.difficulty ?? "medium"];
+  if (prof.micro && s.tick % 2 === 0) aiMicro(s, owner); // responsive focus-fire
+  if (s.tick % prof.cadence !== 0) return; // macro on the difficulty's decision cadence
 
   const myUnits = s.units.filter((u) => u.owner === owner);
   const myBuildings = s.buildings.filter((b) => b.owner === owner);
-  const nexus = myBuildings.find((b) => b.type === "nexus");
+  const nexus = myBuildings.find((b) => b.type === "nexus" && b.built) ?? myBuildings.find((b) => b.type === "nexus");
   if (!nexus) return;
   const nc = buildingCenter(nexus);
 
@@ -1060,10 +1126,14 @@ function runAI(s: GameState, _dt: number) {
   const buildingPylon = pylons.some((b) => !b.built);
   const pc = builtPylon ? buildingCenter(builtPylon) : nc;
   const gateways = myBuildings.filter((b) => b.type === "gateway");
+  const builtGateways = gateways.filter((b) => b.built);
   const cannons = myBuildings.filter((b) => b.type === "cannon");
   const margin = p.supplyMax - p.supplyUsed;
-  const gatewayBuilt = gateways.some((b) => b.built);
-  const cyberBuilt = myBuildings.some((b) => b.type === "cybernetics" && b.built);
+  const gatewayBuilt = builtGateways.length > 0;
+  const cyber = myBuildings.find((b) => b.type === "cybernetics");
+  const cyberBuilt = !!cyber && cyber.built;
+  const forge = myBuildings.find((b) => b.type === "forge");
+  const forgeBuilt = !!forge && forge.built;
 
   // --- Economy (minerals first; cap gas at 2; expand patches; excavate build room). ---
   // Anchor everything at a worker's tile (always on reachable floor) rather than the
@@ -1160,10 +1230,10 @@ function runAI(s: GameState, _dt: number) {
       }
     }
   }
-  // Cap gas at 2 so minerals stay the priority.
+  // Gas workers per difficulty (minerals stay the priority; easy skips gas entirely).
   let gasCount = workers.filter(isGasWorker).length;
   for (const w of workers) {
-    if (gasCount <= 2) break;
+    if (gasCount <= prof.gasWorkers) break;
     if (isGasWorker(w)) {
       w.depositId = null;
       w.state = "harvesting";
@@ -1171,7 +1241,7 @@ function runAI(s: GameState, _dt: number) {
     }
   }
   const gasDep = nearestDeposit(s, "gas", nc);
-  if (gasDep && gasCount < 2 && workers.length >= 8 && start) {
+  if (gasDep && gasCount < prof.gasWorkers && workers.length >= 8 && start) {
     const adj = freeAdjacentTile(s,gasDep.tx, gasDep.ty, nc);
     const gasReachable = !!adj && findPath(s.grid, s.buildings, { x: start.x + 0.5, y: start.y + 0.5 }, adj) !== null;
     if (gasReachable) {
@@ -1190,7 +1260,9 @@ function runAI(s: GameState, _dt: number) {
   //   • failing that, excavating a compact build room around the Nexus so tech has
   //     somewhere to go (a 4×4 start can't even fit a 2×2 Gateway until we dig).
   // We also keep the room growing once buildings start eating the floor.
-  const ROOM_TARGET = 40; // open floor tiles to maintain around the base
+  // Build room scales with how much the AI wants to build (each 2×2 needs space + a
+  // walkable lane) — but kept modest so digging doesn't starve mining and army.
+  const ROOM_TARGET = 24 + prof.gatewayCap * 4 + (prof.buildForge ? 6 : 0);
   const idleWorkers = workers.filter((w) => w.state === "idle");
   if (start && reach.size > 0) {
     const newMin = nearestUnreachedMineral(s, reach, nc);
@@ -1202,66 +1274,77 @@ function runAI(s: GameState, _dt: number) {
     }
   }
 
-  // 0. Ramp workers to ~12 (cheap; do this before saving for tech).
-  if (workers.length < 12 && nexus.queue.length === 0 && p.minerals >= 50 && p.supplyUsed < p.supplyMax) {
+  // === Build order. Spend across many actions per cadence, but reserve the next
+  //     building's cost so army training never starves the tech that needs it. ===
+  // 0. Workers up to the difficulty's cap.
+  if (workers.length < prof.workerCap && nexus.built && nexus.queue.length < 1 && margin >= 1) {
     enqueueTrain(s, nexus, "worker");
-    return;
   }
-  // 1–4. Tech goals: save until affordable (don't fritter minerals on cheaper things);
-  // only fall through when placement is impossible.
-  if (!hasPylon && !buildingPylon) {
-    if (aiTryBuild(s, owner, "pylon", nc, reach) !== "cannot") return;
+  // 1. Pylons — for supply AND to extend the power field. Production buildings (Gateway,
+  //    Cybernetics, Forge, Cannon) must sit in a power field, so a single pylon quickly
+  //    caps how much the AI can build; adding pylons (placed in rings out from the Nexus,
+  //    so they reach into the dug room) is what unlocks more production. Without this the
+  //    AI banks huge unused resources, stuck on one Gateway.
+  const wantsMoreProd =
+    gateways.length < prof.gatewayCap ||
+    (prof.useStalkers && !cyber) ||
+    (prof.buildForge && !forge) ||
+    (cannons.length < prof.buildCannons && cyberBuilt);
+  const supplyBuffer = prof.gatewayCap >= 3 ? 6 : 3;
+  const supplyLow = p.supplyMax < SUPPLY_CAP && margin <= supplyBuffer;
+  if (!buildingPylon && (supplyLow || (wantsMoreProd && p.minerals >= 175 && pylons.length < 7))) {
+    aiTryBuild(s, owner, "pylon", nc, reach);
   }
-  if (hasPylon && gateways.length === 0) {
-    if (aiTryBuild(s, owner, "gateway", pc, reach) !== "cannot") return;
+  // 2. Next tech / production building; if we can't afford a needed one yet, reserve its
+  //    cost so the army budget below leaves the savings alone. Anchored at the Nexus so
+  //    rings expand into the excavated room.
+  let reserve = 0;
+  const tryBuild = (t: BuildingType) => {
+    if (aiTryBuild(s, owner, t, nc, reach) === "saving") reserve = Math.max(reserve, BUILDING_STATS[t].minerals);
+  };
+  if (!hasPylon && !buildingPylon) tryBuild("pylon");
+  else if (gateways.length === 0) tryBuild("gateway");
+  else {
+    // A 2nd Gateway early for army throughput (Zealots are the backbone), then tech.
+    if (gateways.length < Math.min(2, prof.gatewayCap)) tryBuild("gateway");
+    if (prof.useStalkers && !cyber) tryBuild("cybernetics");
+    if (prof.buildForge && !forge) tryBuild("forge");
+    if (gateways.length < prof.gatewayCap) tryBuild("gateway"); // ramp production
+    if (cannons.length < prof.buildCannons && cyberBuilt) tryBuild("cannon");
   }
-  if (gatewayBuilt && !myBuildings.some((b) => b.type === "cybernetics")) {
-    if (aiTryBuild(s, owner, "cybernetics", pc, reach) !== "cannot") return;
+  // 3. Forge research, alternating weapons/armor.
+  if (forgeBuilt && forge!.researchQueue.length === 0) {
+    if (p.upgrades.groundWeapons <= p.upgrades.groundArmor) enqueueResearch(s, forge!, "weapon");
+    else enqueueResearch(s, forge!, "armor");
   }
-  if (gatewayBuilt && !myBuildings.some((b) => b.type === "forge")) {
-    if (aiTryBuild(s, owner, "forge", pc, reach) !== "cannot") return;
+  // 4. Train army from every idle Gateway, keeping the reserve for the next building.
+  //    Aim for roughly half Stalkers once the tech + gas allow it.
+  for (const gw of builtGateways) {
+    if (gw.queue.length >= 2 || margin < 2) continue;
+    const stalkers = army.filter((u) => u.type === "stalker").length;
+    const wantStalker =
+      prof.useStalkers && cyberBuilt && p.gas >= 50 && p.minerals >= 125 + reserve && stalkers * 2 < army.length;
+    if (wantStalker) enqueueTrain(s, gw, "stalker");
+    else if (p.minerals >= 100 + reserve) enqueueTrain(s, gw, "zealot");
   }
-  // 5. More supply as the cap approaches.
-  if (p.supplyMax < SUPPLY_CAP && margin <= 2 && !buildingPylon) {
-    if (aiTryBuild(s, owner, "pylon", nc, reach) !== "cannot") return;
-  }
-  // 6. A couple of defensive cannons when flush.
-  if (cannons.length < 2 && cyberBuilt && p.minerals >= 300) {
-    aiTryBuild(s, owner, "cannon", nc, reach);
-  }
-  // 7. Forge research.
-  const forge = myBuildings.find((b) => b.type === "forge" && b.built && b.researchQueue.length === 0);
-  if (forge && p.minerals >= 250) {
-    if (p.upgrades.groundWeapons <= p.upgrades.groundArmor) enqueueResearch(s, forge, "weapon");
-    else enqueueResearch(s, forge, "armor");
-  }
-  // 8. Train army (mix Stalkers once Cybernetics + gas allow).
-  const gw = gateways.find((b) => b.built && b.queue.length < 2);
-  if (gw && margin >= 2) {
-    if (cyberBuilt && p.gas >= 50 && p.minerals >= 125 && army.length % 3 === 0) {
-      enqueueTrain(s, gw, "stalker");
-    } else if (p.minerals >= 100) {
-      enqueueTrain(s, gw, "zealot");
-    }
-  }
-  // 8.5 Break through: tunnel toward the enemy with fast-digging combat units (they
-  // mine faster than workers); once a path connects, send the whole army in.
-  if (army.length >= 3 && start) {
-    const enemyMain =
-      s.buildings.find((b) => b.owner !== owner && b.type === "nexus") ??
-      s.buildings.find((b) => b.owner !== owner);
+  // 5. Push out once the army reaches the difficulty's threshold: tunnel toward the
+  //    nearest enemy main if not yet connected, else feed idle fighters in to attack-move.
+  if (start && army.length >= prof.attackArmy) {
+    const enemyMain = nearestEnemyBuilding(s, owner, nc);
     if (enemyMain) {
       const goal = approachTileForBuilding(s, enemyMain, buildingCenter(enemyMain));
       const connected = !!goal && findPath(s.grid, s.buildings, { x: start.x + 0.5, y: start.y + 0.5 }, goal) !== null;
       if (!connected) {
-        // Combat units first (faster diggers), spare workers as backup.
         digToward(s, army.concat(workers), start, buildingCenter(enemyMain), army.length >= 8 ? 5 : 3);
-      } else if (goal && s.tick % (16 * 18) < 16) {
+      } else if (goal) {
+        const g = { x: Math.floor(goal.x), y: Math.floor(goal.y) };
         for (const u of army) {
-          u.attackGoal = { x: Math.floor(goal.x), y: Math.floor(goal.y) };
-          u.path = null;
-          u.targetId = null;
-          u.state = "attack_moving";
+          if (u.state === "idle") {
+            u.attackGoal = g;
+            u.path = null;
+            u.targetId = null;
+            u.state = "attack_moving";
+          }
         }
       }
     }
@@ -1281,6 +1364,6 @@ export function step(s: GameState, dt: number): void {
   recomputeSupply(s);
   if (s.tick % 4 === 0) computeVisibility(s, 0, s.visibility);
   checkWinCondition(s);
-  runAI(s, dt);
+  for (const p of s.players) if (p.isAI && !p.defeated) runAI(s, p.id, dt);
   s.tick++;
 }
