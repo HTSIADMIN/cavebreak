@@ -239,7 +239,35 @@ const crater: MapDef = {
   carve: spokesToCenter,
 };
 
-export const MAPS: Record<string, MapDef> = { cavern, corners, crater };
+// --- Map 4: Hourglass (2 players, central choke) — top vs bottom, split by an -------
+// unmineable wall with one gap. Showcases the "defensible chokepoint" pillar.
+const hourglass: MapDef = {
+  id: "hourglass",
+  name: "Hourglass",
+  description: "Top vs bottom, divided by an unmineable wall with a single central gap — a natural defensible choke. 1v1.",
+  maxPlayers: 2,
+  starts: [pocketPlan(31, 11), pocketPlan(31, 51)],
+  // A 2-tile-thick solid wall across the middle, broken only by a 6-wide gap at center.
+  shapeMask: (x, y) => (y === 31 || y === 32) && (x < 29 || x > 34),
+  placeResources(ctx) {
+    const vmir = (v: Vec2): Vec2 => ({ x: v.x, y: MAP_H - 1 - v.y });
+    for (const a of [{ x: 24, y: 13 }, { x: 39, y: 14 }, { x: 14, y: 23 }, { x: 50, y: 23 }]) {
+      placeCluster(ctx, a.x, a.y, 5, false);
+      const m = vmir(a);
+      placeCluster(ctx, m.x, m.y, 5, false);
+    }
+    // Contested golden fields flanking the choke — off the central corridor (minerals
+    // are impassable, so a cluster on the centerline would wall the gap shut).
+    placeCluster(ctx, 23, 27, 6, true);
+    placeCluster(ctx, 40, 36, 6, true);
+  },
+  carve(ctx) {
+    const gap = { x: 31, y: 31 };
+    for (const c of ctx.centers) carveLine(ctx.grid, c.x, c.y, gap.x, gap.y, 1);
+  },
+};
+
+export const MAPS: Record<string, MapDef> = { cavern, hourglass, corners, crater };
 export const DEFAULT_MAP_ID = "cavern";
 
 // Lightweight metadata for the setup screen (no generation logic).

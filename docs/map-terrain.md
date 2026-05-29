@@ -62,4 +62,5 @@ Each grid cell stores exactly one terrain type (plus occupancy info — what uni
   - **Cavern Duel** — square, 2 players on opposite corners, one winding central corridor (the original 1v1).
   - **Four Corners** — square, up to 4 players in the corners, a rich **golden core**, hub-and-spoke corridors to center.
   - **Crater** — **circular** silhouette (corners masked to `BOUNDARY`), up to 4 players at N/S/E/W around a golden core. Demonstrates the `shapeMask`.
+  - **Hourglass** — 2 players (top vs bottom) split by a 2-tile **unmineable wall** (a `shapeMask` painting `BOUNDARY` everywhere on the divider except a central gap), connected only through that **choke**. Showcases the "defensible chokepoint" pillar. Gotcha learned: resource clusters are *impassable*, so the contested golden fields must sit **off** the corridor centerline or they wall the gap shut.
   Pockets/resources/corridors all sit inside the silhouette; `placeCluster` only seeds on `ROCK` and avoids active starts, `carveLine` only clears `ROCK` (leaving resources embedded).
