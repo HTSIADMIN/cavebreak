@@ -131,7 +131,7 @@ function stateLabel(st: string): string {
   return map[st] ?? st;
 }
 
-export default function Match() {
+function Game({ onRestart }: { onRestart: () => void }) {
   const [hud, setHud] = useState<HudData>(EMPTY_HUD);
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -149,6 +149,8 @@ export default function Match() {
   const miniDragRef = useRef(false);
   const sizeRef = useRef({ w: 0, h: 0 });
   const actionsRef = useRef<HudAction[]>([]);
+  const groupsRef = useRef<Map<number, number[]>>(new Map());
+  const markersRef = useRef<{ x: number; y: number; kind: "move" | "attack"; t: number }[]>([]);
 
   function dispatch(cmd: Command) {
     const s = stateRef.current;
@@ -168,6 +170,10 @@ export default function Match() {
     const s = stateRef.current;
     if (!s) return null;
     return s.buildings.find((b) => selectedRef.current.has(b.id) && b.owner === LOCAL_PLAYER) ?? null;
+  }
+  function pushMarker(wx: number, wy: number, kind: "move" | "attack") {
+    markersRef.current.push({ x: wx, y: wy, kind, t: 1 });
+    if (markersRef.current.length > 64) markersRef.current.shift();
   }
   function onAction(id: string) {
     if (id.startsWith("build:")) {
@@ -277,6 +283,7 @@ export default function Match() {
       const enemy = pickEnemyAt(wx, wy);
       if (enemy !== null) {
         dispatch({ type: "attack", unitIds: ids, targetId: enemy });
+        pushMarker(wx, wy, "attack");
         return;
       }
       const t = getTile(state.grid, tx, ty);
@@ -286,6 +293,7 @@ export default function Match() {
         if (dep) dispatch({ type: "harvest", unitIds: ids, depositId: dep.id });
         else dispatch({ type: "move", unitIds: ids, tx, ty });
       } else dispatch({ type: "move", unitIds: ids, tx, ty });
+      pushMarker(tx + 0.5, ty + 0.5, "move");
     };
 
     const clickSelect = (sx: number, sy: number, shift: boolean) => {
@@ -334,7 +342,10 @@ export default function Match() {
         if (attackModeRef.current) {
           const { wx, wy } = worldAt(x, y);
           const ids = selectedUnitIds();
-          if (ids.length) dispatch({ type: "attackMove", unitIds: ids, tx: Math.floor(wx), ty: Math.floor(wy) });
+          if (ids.length) {
+            dispatch({ type: "attackMove", unitIds: ids, tx: Math.floor(wx), ty: Math.floor(wy) });
+            pushMarker(Math.floor(wx) + 0.5, Math.floor(wy) + 0.5, "attack");
+          }
           attackModeRef.current = false;
           return;
         }
@@ -368,11 +379,42 @@ export default function Match() {
       else clickSelect(d.x0, d.y0, e.shiftKey);
     };
 
+    const onWheel = (e: WheelEvent) => {
+      const { x, y, inside } = canvasXY(e);
+      if (!inside) return;
+      e.preventDefault();
+      const wx = cam.screenToWorldX(x);
+      const wy = cam.screenToWorldY(y);
+      cam.zoom = Math.max(0.5, Math.min(2.5, cam.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      cam.x = wx - x / cam.scale; // keep the world point under the cursor fixed
+      cam.y = wy - y / cam.scale;
+      cam.pan(0, 0, MAP_W, MAP_H, sizeRef.current.w, sizeRef.current.h);
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
       const k = e.key;
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(k)) {
         e.preventDefault();
         keysRef.current.add(k);
+        return;
+      }
+      if (/^[1-9]$/.test(k)) {
+        e.preventDefault();
+        const g = Number(k);
+        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+          groupsRef.current.set(g, [...selectedRef.current]);
+        } else {
+          const ids = groupsRef.current.get(g);
+          if (ids && ids.length) {
+            selectedRef.current = new Set(
+              ids.filter(
+                (id) =>
+                  state.units.some((u) => u.id === id && u.owner === LOCAL_PLAYER) ||
+                  state.buildings.some((b) => b.id === id && b.owner === LOCAL_PLAYER)
+              )
+            );
+          }
+        }
         return;
       }
       const lk = k.toLowerCase();
@@ -396,6 +438,7 @@ export default function Match() {
     window.addEventListener("mousedown", onMouseDown);
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("wheel", onWheel, { passive: false });
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
 
@@ -434,6 +477,7 @@ export default function Match() {
         localPlayer: LOCAL_PLAYER,
         dragScreen: d?.active && d.moved ? { x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1 } : null,
         placement,
+        markers: markersRef.current,
       };
       renderGame(ctx, w, h, state, cam, view);
       renderMinimap(mctx, mini.clientWidth, mini.clientHeight, state, cam, w, h);
@@ -468,6 +512,8 @@ export default function Match() {
       const dt = Math.min(0.1, (now - rafLast) / 1000);
       rafLast = now;
       panFromKeys(dt);
+      for (const m of markersRef.current) m.t -= dt / 0.6;
+      markersRef.current = markersRef.current.filter((m) => m.t > 0);
       draw();
       raf = requestAnimationFrame(renderLoop);
     };
@@ -480,6 +526,7 @@ export default function Match() {
       window.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("wheel", onWheel);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
@@ -500,7 +547,7 @@ export default function Match() {
       <div ref={wrapRef} className="relative flex-1 overflow-hidden">
         <canvas ref={canvasRef} className="block h-full w-full" onContextMenu={(e) => e.preventDefault()} />
         <TopBar {...hud} />
-        <WinnerBanner winner={hud.winner} localPlayer={hud.localPlayer} />
+        <WinnerBanner winner={hud.winner} localPlayer={hud.localPlayer} onRestart={onRestart} />
       </div>
       <div className="flex h-44 items-stretch border-t border-zinc-800 bg-zinc-950">
         <div className="p-2">
@@ -518,4 +565,10 @@ export default function Match() {
       </div>
     </div>
   );
+}
+
+export default function Match() {
+  // Bumping the key remounts Game with a fresh sim — instant restart, no reload.
+  const [runId, setRunId] = useState(0);
+  return <Game key={runId} onRestart={() => setRunId((n) => n + 1)} />;
 }

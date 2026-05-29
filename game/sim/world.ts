@@ -832,6 +832,59 @@ function aiTryBuild(s: GameState, owner: PlayerId, type: BuildingType, near: Vec
   return "built";
 }
 
+// Floor tiles reachable from `start` for the AI (4-connected, blocked by non-floor
+// and by building footprints). Used to find the AI's own digging frontier.
+function aiReachableFloor(s: GameState, start: Vec2): Set<number> {
+  const { grid } = s;
+  const W = grid.width;
+  const seen = new Set<number>();
+  const blocked = (x: number, y: number) => !isWalkable(grid, x, y) || tileOccupiedByBuilding(s, x, y);
+  if (blocked(start.x, start.y)) return seen;
+  const q = [start.y * W + start.x];
+  seen.add(q[0]);
+  while (q.length) {
+    const i = q.pop()!;
+    const x = i % W;
+    const y = (i / W) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!inBounds(grid, nx, ny)) continue;
+      const ni = ny * W + nx;
+      if (seen.has(ni) || blocked(nx, ny)) continue;
+      seen.add(ni);
+      q.push(ni);
+    }
+  }
+  return seen;
+}
+
+// The ROCK tile on the AI's frontier (adjacent to its reachable floor) closest to
+// `target` — i.e. the next tile to mine to advance a tunnel toward the enemy.
+function bestDigTile(s: GameState, reach: Set<number>, target: Vec2, exclude: Set<number>): Vec2 | null {
+  const { grid } = s;
+  const W = grid.width;
+  let best: Vec2 | null = null;
+  let bd = Infinity;
+  for (const i of reach) {
+    const x = i % W;
+    const y = (i / W) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!inBounds(grid, nx, ny) || getTile(grid, nx, ny) !== TileType.ROCK) continue;
+      const ni = ny * W + nx;
+      if (exclude.has(ni)) continue;
+      const d = (nx + 0.5 - target.x) ** 2 + (ny + 0.5 - target.y) ** 2;
+      if (d < bd) {
+        bd = d;
+        best = { x: nx, y: ny };
+      }
+    }
+  }
+  return best;
+}
+
 function runAI(s: GameState, _dt: number) {
   if (s.tick % 16 !== 0) return; // ~once/second
   const owner: PlayerId = 1;
@@ -913,6 +966,44 @@ function runAI(s: GameState, _dt: number) {
       enqueueTrain(s, gw, "zealot");
     }
   }
+  // 8.5 Offensive mining — once an army is forming, dig a tunnel toward the enemy
+  // so the army can break through the solid rock between the two bases.
+  if (army.length >= 4) {
+    const enemyMain =
+      s.buildings.find((b) => b.owner !== owner && b.type === "nexus") ??
+      s.buildings.find((b) => b.owner !== owner);
+    if (enemyMain) {
+      const target = buildingCenter(enemyMain);
+      const start = approachTileForBuilding(s, nexus, nc);
+      const goal = approachTileForBuilding(s, enemyMain, target);
+      const connected =
+        !!start && !!goal && findPath(s.grid, s.buildings, { x: start.x + 0.5, y: start.y + 0.5 }, goal) !== null;
+      if (!connected && start) {
+        const reach = aiReachableFloor(s, start);
+        const beingMined = new Set(
+          workers.filter((w) => w.state === "mining_wall" && w.mineTile).map((w) => w.mineTile!.y * s.grid.width + w.mineTile!.x)
+        );
+        const diggers = workers.filter((w) => w.state === "mining_wall").length;
+        // Dedicate a wide dig crew so the tunnel actually reaches across the map.
+        const digCrew = army.length >= 10 ? 6 : 3;
+        for (let i = 0; i < digCrew - diggers; i++) {
+          const tile = bestDigTile(s, reach, target, beingMined);
+          if (!tile) break;
+          const w = workers.find((u) => u.state === "harvesting" || u.state === "idle");
+          if (!w) break;
+          w.state = "mining_wall";
+          w.mineTile = { x: tile.x, y: tile.y };
+          w.mineProgress = 0;
+          w.depositId = null;
+          w.carrying = null;
+          w.targetId = null;
+          w.path = null;
+          beingMined.add(tile.y * s.grid.width + tile.x);
+        }
+      }
+    }
+  }
+
   // 9. Attack waves.
   if (army.length >= 6 && s.tick % (16 * 35) < 16) {
     const enemyNexus = s.buildings.find((b) => b.owner === 0 && b.type === "nexus");

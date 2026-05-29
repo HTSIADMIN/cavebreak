@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useTheme } from "next-themes";
 import { Gamepad2, Moon, Sun, Home } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -19,7 +18,7 @@ import {
 export function CommandMenu() {
   const [open, setOpen] = useState(false);
   const router = useRouter();
-  const { setTheme } = useTheme();
+  const setDark = (dark: boolean) => document.documentElement.classList.toggle("dark", dark);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -55,11 +54,11 @@ export function CommandMenu() {
           </CommandGroup>
           <CommandSeparator />
           <CommandGroup heading="Theme">
-            <CommandItem onSelect={() => run(() => { setTheme("dark"); toast("Theme set to dark"); })}>
+            <CommandItem onSelect={() => run(() => { setDark(true); toast("Theme set to dark"); })}>
               <Moon />
               Dark
             </CommandItem>
-            <CommandItem onSelect={() => run(() => { setTheme("light"); toast("Theme set to light"); })}>
+            <CommandItem onSelect={() => run(() => { setDark(false); toast("Theme set to light"); })}>
               <Sun />
               Light
             </CommandItem>

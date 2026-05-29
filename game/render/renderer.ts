@@ -8,6 +8,7 @@ export interface RenderView {
   localPlayer: number;
   dragScreen: { x0: number; y0: number; x1: number; y1: number } | null;
   placement: { type: BuildingType; tx: number; ty: number; valid: boolean } | null;
+  markers: { x: number; y: number; kind: "move" | "attack"; t: number }[];
 }
 
 const TILE_COLORS: Record<number, string> = {
@@ -172,6 +173,20 @@ export function renderGame(
       drawBar(ctx, cx - r, cy - r - 6, r * 2, u.hp / u.maxHp, "#5ad15a");
       if (u.maxShields > 0) drawBar(ctx, cx - r, cy - r - 10, r * 2, u.shields / u.maxShields, "#6bc5ff");
     }
+  }
+
+  // Command feedback markers (move = green, attack = red), expanding as they fade.
+  for (const m of view.markers) {
+    const cx = cam.worldToScreenX(m.x);
+    const cy = cam.worldToScreenY(m.y);
+    const rr = scale * (0.15 + (1 - m.t) * 0.4);
+    ctx.globalAlpha = Math.max(0, m.t);
+    ctx.strokeStyle = m.kind === "attack" ? "#ff5a4a" : "#7CFC7C";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
   }
 
   // Placement ghost.

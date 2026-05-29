@@ -71,16 +71,29 @@ export function CommandCard({ actions, onAction }: { actions: HudAction[]; onAct
   );
 }
 
-export function WinnerBanner({ winner, localPlayer }: { winner: number | null; localPlayer: number }) {
+export function WinnerBanner({
+  winner,
+  localPlayer,
+  onRestart,
+}: {
+  winner: number | null;
+  localPlayer: number;
+  onRestart?: () => void;
+}) {
   if (winner === null) return null;
   const won = winner === localPlayer;
   return (
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-      <div className={`rounded-2xl px-10 py-6 text-center backdrop-blur-sm ${won ? "bg-cyan-500/15" : "bg-red-500/15"}`}>
+      <div className={`pointer-events-auto rounded-2xl px-10 py-6 text-center backdrop-blur-sm ${won ? "bg-cyan-500/15" : "bg-red-500/15"}`}>
         <p className={`text-5xl font-bold tracking-tight ${won ? "text-cyan-300" : "text-red-300"}`}>
           {won ? "Victory" : "Defeat"}
         </p>
-        <p className="mt-1 text-sm text-zinc-400">Reload to play again</p>
+        <button
+          onClick={onRestart}
+          className="mt-3 rounded-full bg-zinc-100 px-5 py-2 text-sm font-semibold text-zinc-900 transition-colors hover:bg-white"
+        >
+          Play again
+        </button>
       </div>
     </div>
   );
