@@ -14,7 +14,7 @@ import {
   WALL_CLEAR_MINERAL_BONUS,
 } from "./constants";
 import { computeVisibility } from "./fog";
-import { getTile, inBounds, isAdjacentToTile, isWalkable, nearestAdjacentFloor, setTile } from "./grid";
+import { getTile, inBounds, isAdjacentToTile, isWalkable, setTile } from "./grid";
 import { findPath } from "./pathfinding";
 import { isPlacementPowered } from "./power";
 import {
@@ -124,6 +124,27 @@ function tileOccupiedByBuilding(s: GameState, x: number, y: number): boolean {
     if (x >= b.tx && x < b.tx + b.w && y >= b.ty && y < b.ty + b.h) return true;
   }
   return false;
+}
+
+// Nearest standable tile adjacent (8-dir) to (tx,ty). Unlike grid's nearestAdjacentFloor,
+// this also rejects tiles sitting *under a building*: terrain stays FLOOR beneath a
+// building, but the pathfinder blocks those footprints — so picking one as an approach
+// goal makes findPath return null and the unit freezes. This bit melee units approaching
+// an enemy that hugs a building (the approach tile resolved onto the building itself).
+function freeAdjacentTile(s: GameState, tx: number, ty: number, from: Vec2): Vec2 | null {
+  let best: Vec2 | null = null;
+  let bd = Infinity;
+  for (const [dx, dy] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]) {
+    const nx = tx + dx;
+    const ny = ty + dy;
+    if (!isWalkable(s.grid, nx, ny) || tileOccupiedByBuilding(s, nx, ny)) continue;
+    const d = (nx + 0.5 - from.x) ** 2 + (ny + 0.5 - from.y) ** 2;
+    if (d < bd) {
+      bd = d;
+      best = { x: nx, y: ny };
+    }
+  }
+  return best;
 }
 
 function approachTileForBuilding(s: GameState, b: Building, from: Vec2): Vec2 | null {
@@ -251,7 +272,21 @@ function acquireTarget(s: GameState, u: Unit, range: number): number | null {
 }
 
 function inWeaponRange(u: Unit, e: Unit | Building, range: number): boolean {
-  return distToEntity(u, e) <= range + entityRadius(e);
+  if (distToEntity(u, e) <= range + entityRadius(e)) return true;
+  // Units snap to tile centers, so the closest a melee attacker can stand to a
+  // stationary target is one tile away — center-distance 1.0 (orthogonal) or ~1.41
+  // (diagonal), both beyond a 0.5 melee range. So a melee unit would never connect
+  // with an idle enemy. Treat a melee attacker on a tile bordering the target's
+  // tile/footprint as in range, matching the discrete movement grid.
+  if (range <= 0.6) {
+    const ux = Math.floor(u.x);
+    const uy = Math.floor(u.y);
+    if (isBuildingEntity(e)) {
+      return ux >= e.tx - 1 && ux <= e.tx + e.w && uy >= e.ty - 1 && uy <= e.ty + e.h;
+    }
+    return Math.abs(ux - Math.floor(e.x)) <= 1 && Math.abs(uy - Math.floor(e.y)) <= 1;
+  }
+  return false;
 }
 
 // --- per-unit update -----------------------------------------------------
@@ -325,8 +360,8 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
         const c = entityCenter(tgt);
         const goalTile = isBuildingEntity(tgt)
           ? approachTileForBuilding(s, tgt, u)
-          : nearestAdjacentFloor(s.grid, Math.floor(c.x), Math.floor(c.y), u) ?? { x: Math.floor(c.x), y: Math.floor(c.y) };
-        if (u.repathCd <= 0 || u.path === null) {
+          : freeAdjacentTile(s,Math.floor(c.x), Math.floor(c.y), u) ?? { x: Math.floor(c.x), y: Math.floor(c.y) };
+        if (u.repathCd <= 0 || u.path === null || u.path.length === 0) {
           const p = goalTile ? findPath(s.grid, s.buildings, u, goalTile) : null;
           u.path = p;
           u.repathCd = 0.4;
@@ -347,7 +382,7 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
         return;
       }
       const adj = isAdjacentToTile(u.x, u.y, t.x, t.y);
-      const res = approach(s, u, adj, nearestAdjacentFloor(s.grid, t.x, t.y, u), dt);
+      const res = approach(s, u, adj, freeAdjacentTile(s,t.x, t.y, u), dt);
       if (res === "blocked") return becomeIdle(u);
       if (res !== "arrived") return;
       // Cooperative: every adjacent miner adds its rate to the shared tile progress.
@@ -373,7 +408,7 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
         u.path = null;
       }
       const adj = isAdjacentToTile(u.x, u.y, dep.tx, dep.ty);
-      const res = approach(s, u, adj, nearestAdjacentFloor(s.grid, dep.tx, dep.ty, u), dt);
+      const res = approach(s, u, adj, freeAdjacentTile(s,dep.tx, dep.ty, u), dt);
       if (res === "blocked") return becomeIdle(u);
       if (res !== "arrived") return;
       const gatherTime = dep.kind === "gas" ? GAS_GATHER_TIME_S : MINERAL_GATHER_TIME_S;
@@ -706,7 +741,7 @@ function enqueueResearch(s: GameState, b: Building, kind: UpgradeKind): boolean 
 
 function walkableGoal(s: GameState, tx: number, ty: number): Vec2 | null {
   if (isWalkable(s.grid, tx, ty)) return { x: tx, y: ty };
-  return nearestAdjacentFloor(s.grid, tx, ty, { x: tx + 0.5, y: ty + 0.5 });
+  return freeAdjacentTile(s,tx, ty, { x: tx + 0.5, y: ty + 0.5 });
 }
 
 export function applyCommand(s: GameState, cmd: Command): void {
@@ -813,18 +848,85 @@ export function applyCommand(s: GameState, cmd: Command): void {
 
 // --- enemy AI (player 1) -------------------------------------------------
 
-function findPlacementNear(s: GameState, owner: PlayerId, type: BuildingType, near: Vec2): Vec2 | null {
-  for (let r = 2; r <= 12; r++) {
+// Would planting `type` at (tx,ty) wall off any floor the AI currently relies on?
+// The AI must never seal in its own workers or its digging frontier, so we require:
+//   1. the whole footprint sits on the AI's connected floor (`reach`), and
+//   2. removing the footprint leaves every other reachable tile still reachable.
+// This is what keeps the AI from cramming buildings into 1-wide tunnels.
+function aiPlacementOk(s: GameState, type: BuildingType, tx: number, ty: number, reach: Set<number>): boolean {
+  const st = BUILDING_STATS[type];
+  const W = s.grid.width;
+  const footprint = new Set<number>();
+  for (let y = ty; y < ty + st.h; y++) {
+    for (let x = tx; x < tx + st.w; x++) {
+      const i = y * W + x;
+      if (!reach.has(i)) return false; // build only on the connected base
+      footprint.add(i);
+    }
+  }
+  // Anchor the connectivity test on a reachable tile that isn't part of the footprint.
+  let anchor = -1;
+  for (const t of reach) {
+    if (!footprint.has(t)) {
+      anchor = t;
+      break;
+    }
+  }
+  if (anchor < 0) return false;
+  const newReach = aiReachableFloor(s, { x: anchor % W, y: (anchor / W) | 0 }, footprint);
+  for (const t of reach) {
+    if (!footprint.has(t) && !newReach.has(t)) return false; // would sever this tile
+  }
+  return true;
+}
+
+function findPlacementNear(
+  s: GameState,
+  owner: PlayerId,
+  type: BuildingType,
+  near: Vec2,
+  reach: Set<number>,
+): Vec2 | null {
+  for (let r = 1; r <= 12; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
         const tx = Math.floor(near.x) + dx;
         const ty = Math.floor(near.y) + dy;
-        if (canPlaceBuilding(s, owner, type, tx, ty)) return { x: tx, y: ty };
+        if (canPlaceBuilding(s, owner, type, tx, ty) && aiPlacementOk(s, type, tx, ty, reach)) {
+          return { x: tx, y: ty };
+        }
       }
     }
   }
   return null;
+}
+
+// Nearest mineral deposit (with ore left) the AI can't yet reach — i.e. none of its
+// floor-adjacent tiles are on the connected base. Diggers head here to open new patches.
+function nearestUnreachedMineral(s: GameState, reach: Set<number>, from: Vec2): Deposit | null {
+  const W = s.grid.width;
+  let best: Deposit | null = null;
+  let bd = Infinity;
+  for (const d of s.deposits) {
+    if (d.kind !== "mineral" || d.remaining <= 0) continue;
+    let reached = false;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = d.tx + dx;
+      const ny = d.ty + dy;
+      if (isWalkable(s.grid, nx, ny) && reach.has(ny * W + nx)) {
+        reached = true;
+        break;
+      }
+    }
+    if (reached) continue;
+    const dist = (d.tx + 0.5 - from.x) ** 2 + (d.ty + 0.5 - from.y) ** 2;
+    if (dist < bd) {
+      bd = dist;
+      best = d;
+    }
+  }
+  return best;
 }
 
 function freeWorker(s: GameState, owner: PlayerId): Unit | null {
@@ -837,10 +939,16 @@ type BuildResult = "built" | "saving" | "cannot";
 // Tries to build `type` near `near`. Returns "saving" when a spot exists but we
 // can't afford it yet (caller should stop and accumulate), "cannot" when no
 // placement is possible (caller should fall through), "built" on success.
-function aiTryBuild(s: GameState, owner: PlayerId, type: BuildingType, near: Vec2): BuildResult {
+function aiTryBuild(
+  s: GameState,
+  owner: PlayerId,
+  type: BuildingType,
+  near: Vec2,
+  reach: Set<number>,
+): BuildResult {
   const st = BUILDING_STATS[type];
   const p = s.players[owner];
-  const spot = findPlacementNear(s, owner, type, near);
+  const spot = findPlacementNear(s, owner, type, near, reach);
   if (!spot) return "cannot";
   if (p.minerals < st.minerals || p.gas < st.gas) return "saving";
   const w = freeWorker(s, owner);
@@ -851,11 +959,13 @@ function aiTryBuild(s: GameState, owner: PlayerId, type: BuildingType, near: Vec
 
 // Floor tiles reachable from `start` for the AI (4-connected, blocked by non-floor
 // and by building footprints). Used to find the AI's own digging frontier.
-function aiReachableFloor(s: GameState, start: Vec2): Set<number> {
+// `extraBlocked` lets callers virtually wall off tiles (e.g. test a building footprint).
+function aiReachableFloor(s: GameState, start: Vec2, extraBlocked?: Set<number>): Set<number> {
   const { grid } = s;
   const W = grid.width;
   const seen = new Set<number>();
-  const blocked = (x: number, y: number) => !isWalkable(grid, x, y) || tileOccupiedByBuilding(s, x, y);
+  const blocked = (x: number, y: number) =>
+    !isWalkable(grid, x, y) || tileOccupiedByBuilding(s, x, y) || (!!extraBlocked && extraBlocked.has(y * W + x));
   if (blocked(start.x, start.y)) return seen;
   const q = [start.y * W + start.x];
   seen.add(q[0]);
@@ -955,42 +1065,99 @@ function runAI(s: GameState, _dt: number) {
   const gatewayBuilt = gateways.some((b) => b.built);
   const cyberBuilt = myBuildings.some((b) => b.type === "cybernetics" && b.built);
 
-  // --- Economy (minerals first; cap gas at 2; dig to new minerals when tapped out). ---
-  // Anchor digging at a worker's tile (always on reachable floor) rather than the
+  // --- Economy (minerals first; cap gas at 2; expand patches; excavate build room). ---
+  // Anchor everything at a worker's tile (always on reachable floor) rather than the
   // Nexus border, which can be fully walled off by the AI's own buildings.
   const start: Vec2 | null =
     workers.length > 0
       ? { x: Math.floor(workers[0].x), y: Math.floor(workers[0].y) }
       : approachTileForBuilding(s, nexus, nc);
+  // The AI's connected floor — its build space and digging frontier (computed once).
+  const reach = start ? aiReachableFloor(s, start) : new Set<number>();
   const isGasWorker = (w: Unit) => {
     const d = w.depositId != null ? getDeposit(s, w.depositId) : undefined;
     return !!d && d.kind === "gas";
   };
 
-  // If the nearest minerals aren't reachable, dig toward them before anything else.
-  // Only dig to minerals when the economy has actually stalled (no one delivering and
-  // low on minerals) — otherwise a far unreachable "nearest" deposit would wrongly
-  // block all tech/army even while other deposits are being mined.
-  const earning = workers.some((w) => w.state === "returning_resource" && !!w.carrying && w.carrying.kind === "mineral");
-  const nearMin = nearestDeposit(s, "mineral", nc);
-  if (nearMin && start && !earning) {
-    const adj = nearestAdjacentFloor(s.grid, nearMin.tx, nearMin.ty, nc);
-    const reachable = !!adj && findPath(s.grid, s.buildings, { x: start.x + 0.5, y: start.y + 0.5 }, adj) !== null;
-    if (!reachable) {
-      // Dig toward minerals in the background, but DON'T block tech/army — the AI
-      // spends banked minerals on buildings/units while diggers open new patches.
-      digToward(s, workers, start, { x: nearMin.tx + 0.5, y: nearMin.ty + 0.5 }, 2);
+  // Reachable mineral patches: those with an adjacent floor tile on the connected base.
+  // (4-connected reach ⊆ the pathfinder's 8-connected reach, so these are always pathable.)
+  const reachW = s.grid.width;
+  const reachAdj = (d: Deposit) => {
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = d.tx + dx;
+      const ny = d.ty + dy;
+      if (isWalkable(s.grid, nx, ny) && reach.has(ny * reachW + nx)) return true;
     }
+    return false;
+  };
+  const reachedMin = s.deposits.filter((d) => d.kind === "mineral" && d.remaining > 0 && reachAdj(d));
+  const minAssigned = new Map<number, number>();
+  for (const w of workers) {
+    if (!isGasWorker(w) && w.depositId != null) minAssigned.set(w.depositId, (minAssigned.get(w.depositId) ?? 0) + 1);
   }
-
-  // Re-task idle / depleted workers to minerals (don't disturb diggers, builders, haulers).
+  const anyUnreachedMin = nearestUnreachedMineral(s, reach, nc) != null;
+  // Nearest reachable patch that still has room (<3 workers) — the SC2 saturation target.
+  const pickUndersaturated = (from: Vec2): Deposit | null => {
+    let best: Deposit | null = null;
+    let bestKey = Infinity;
+    for (const d of reachedMin) {
+      const sat = minAssigned.get(d.id) ?? 0;
+      if (sat >= 3) continue;
+      const key = sat * 64 + (d.tx + 0.5 - from.x) ** 2 + (d.ty + 0.5 - from.y) ** 2;
+      if (key < bestKey) {
+        bestKey = key;
+        best = d;
+      }
+    }
+    return best;
+  };
+  const nearestReached = (from: Vec2): Deposit | null => {
+    let best: Deposit | null = null;
+    let bd = Infinity;
+    for (const d of reachedMin) {
+      const dist = (d.tx + 0.5 - from.x) ** 2 + (d.ty + 0.5 - from.y) ** 2;
+      if (dist < bd) {
+        bd = dist;
+        best = d;
+      }
+    }
+    return best;
+  };
+  // Re-task idle / depleted / stranded / over-saturated workers. We assign a *reachable*
+  // patch explicitly (never the generic nearest, which may be unreachable and bounce the
+  // worker back to idle). Workers beyond 3-per-patch are freed to dig open a fresh patch.
   for (const w of workers) {
     if (w.state === "mining_wall" || w.state === "constructing" || w.state === "returning_resource") continue;
     if (isGasWorker(w)) continue;
     const dep = w.depositId != null ? getDeposit(s, w.depositId) : undefined;
-    if (w.state === "idle" || !dep || dep.remaining <= 0) {
+    const depOk = !!dep && dep.remaining > 0 && reachAdj(dep);
+    const sat = depOk ? minAssigned.get(dep!.id) ?? 0 : 0;
+    if (w.state === "harvesting" && depOk && sat <= 3) continue; // happily mining, not crowded
+    const leave = () => {
+      if (w.depositId != null) minAssigned.set(w.depositId, (minAssigned.get(w.depositId) ?? 1) - 1);
+    };
+    const assign = (d: Deposit) => {
+      leave();
+      w.depositId = d.id;
       w.state = "harvesting";
+      w.path = null;
+      minAssigned.set(d.id, (minAssigned.get(d.id) ?? 0) + 1);
+    };
+    const under = pickUndersaturated(w);
+    if (under) {
+      assign(under);
+    } else if (anyUnreachedMin) {
+      leave();
+      w.state = "idle"; // all reachable patches full → go dig a fresh one
       w.depositId = null;
+    } else {
+      const np = nearestReached(w);
+      if (np) assign(np); // nowhere to expand → overflow onto the nearest patch
+      else {
+        leave();
+        w.state = "idle";
+        w.depositId = null;
+      }
     }
   }
   // Cap gas at 2 so minerals stay the priority.
@@ -1005,7 +1172,7 @@ function runAI(s: GameState, _dt: number) {
   }
   const gasDep = nearestDeposit(s, "gas", nc);
   if (gasDep && gasCount < 2 && workers.length >= 8 && start) {
-    const adj = nearestAdjacentFloor(s.grid, gasDep.tx, gasDep.ty, nc);
+    const adj = freeAdjacentTile(s,gasDep.tx, gasDep.ty, nc);
     const gasReachable = !!adj && findPath(s.grid, s.buildings, { x: start.x + 0.5, y: start.y + 0.5 }, adj) !== null;
     if (gasReachable) {
       const cand = workers.find((w) => w.state === "harvesting" && !isGasWorker(w));
@@ -1017,6 +1184,24 @@ function runAI(s: GameState, _dt: number) {
     }
   }
 
+  // Expansion & build space. An idle worker means its mineral patch is saturated,
+  // depleted, or unreachable — so put idle workers to work digging:
+  //   • toward the nearest UNREACHED mineral patch (grows the economy), or
+  //   • failing that, excavating a compact build room around the Nexus so tech has
+  //     somewhere to go (a 4×4 start can't even fit a 2×2 Gateway until we dig).
+  // We also keep the room growing once buildings start eating the floor.
+  const ROOM_TARGET = 40; // open floor tiles to maintain around the base
+  const idleWorkers = workers.filter((w) => w.state === "idle");
+  if (start && reach.size > 0) {
+    const newMin = nearestUnreachedMineral(s, reach, nc);
+    if (idleWorkers.length > 0 && newMin) {
+      digToward(s, workers, start, { x: newMin.tx + 0.5, y: newMin.ty + 0.5 }, Math.min(3, idleWorkers.length + 1));
+    } else if (reach.size < ROOM_TARGET) {
+      // Grow the room compactly (frontier nearest the Nexus), pulling a worker or two.
+      digToward(s, workers, start, nc, idleWorkers.length > 0 ? Math.min(3, idleWorkers.length) : 2);
+    }
+  }
+
   // 0. Ramp workers to ~12 (cheap; do this before saving for tech).
   if (workers.length < 12 && nexus.queue.length === 0 && p.minerals >= 50 && p.supplyUsed < p.supplyMax) {
     enqueueTrain(s, nexus, "worker");
@@ -1025,24 +1210,24 @@ function runAI(s: GameState, _dt: number) {
   // 1–4. Tech goals: save until affordable (don't fritter minerals on cheaper things);
   // only fall through when placement is impossible.
   if (!hasPylon && !buildingPylon) {
-    if (aiTryBuild(s, owner, "pylon", nc) !== "cannot") return;
+    if (aiTryBuild(s, owner, "pylon", nc, reach) !== "cannot") return;
   }
   if (hasPylon && gateways.length === 0) {
-    if (aiTryBuild(s, owner, "gateway", pc) !== "cannot") return;
+    if (aiTryBuild(s, owner, "gateway", pc, reach) !== "cannot") return;
   }
   if (gatewayBuilt && !myBuildings.some((b) => b.type === "cybernetics")) {
-    if (aiTryBuild(s, owner, "cybernetics", pc) !== "cannot") return;
+    if (aiTryBuild(s, owner, "cybernetics", pc, reach) !== "cannot") return;
   }
   if (gatewayBuilt && !myBuildings.some((b) => b.type === "forge")) {
-    if (aiTryBuild(s, owner, "forge", pc) !== "cannot") return;
+    if (aiTryBuild(s, owner, "forge", pc, reach) !== "cannot") return;
   }
   // 5. More supply as the cap approaches.
   if (p.supplyMax < SUPPLY_CAP && margin <= 2 && !buildingPylon) {
-    if (aiTryBuild(s, owner, "pylon", nc) !== "cannot") return;
+    if (aiTryBuild(s, owner, "pylon", nc, reach) !== "cannot") return;
   }
   // 6. A couple of defensive cannons when flush.
   if (cannons.length < 2 && cyberBuilt && p.minerals >= 300) {
-    aiTryBuild(s, owner, "cannon", nc);
+    aiTryBuild(s, owner, "cannon", nc, reach);
   }
   // 7. Forge research.
   const forge = myBuildings.find((b) => b.type === "forge" && b.built && b.researchQueue.length === 0);
