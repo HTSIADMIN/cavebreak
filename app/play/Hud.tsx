@@ -1,11 +1,14 @@
 "use client";
 
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
 export interface HudAction {
   id: string;
   key: string; // hotkey letter
   label: string;
   cost?: string;
   disabled?: boolean;
+  tooltip?: string;
 }
 
 export interface HudData {
@@ -53,19 +56,28 @@ export function SelectionPanel({ title, sub, hint }: { title: string; sub?: stri
 
 export function CommandCard({ actions, onAction }: { actions: HudAction[]; onAction: (id: string) => void }) {
   return (
-    <div className="grid w-72 grid-cols-3 content-start gap-1.5 px-3 py-3">
+    <div className="grid w-72 grid-cols-3 content-start gap-1.5 p-2">
       {actions.map((a) => (
-        <button
-          key={a.id}
-          onClick={() => onAction(a.id)}
-          disabled={a.disabled}
-          title={a.cost}
-          className="flex aspect-square flex-col items-center justify-center rounded border border-zinc-800 bg-zinc-900 p-1 text-center transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-35"
-        >
-          <span className="text-[11px] font-medium leading-tight text-zinc-100">{a.label}</span>
-          {a.cost && <span className="mt-0.5 text-[9px] text-cyan-300">{a.cost}</span>}
-          <kbd className="mt-0.5 rounded bg-zinc-950 px-1 text-[9px] text-zinc-500">{a.key}</kbd>
-        </button>
+        <Tooltip key={a.id}>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => onAction(a.id)}
+              disabled={a.disabled}
+              className="flex h-12 flex-col items-center justify-center gap-0.5 rounded border border-zinc-800 bg-zinc-900 px-1 text-center leading-none transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-35"
+            >
+              <span className="text-[10px] font-medium text-zinc-100">{a.label}</span>
+              <span className="flex items-center gap-1 text-[9px]">
+                {a.cost && <span className="text-cyan-300">{a.cost}</span>}
+                <kbd className="rounded bg-zinc-950 px-1 text-zinc-500">{a.key}</kbd>
+              </span>
+            </button>
+          </TooltipTrigger>
+          {a.tooltip && (
+            <TooltipContent side="top" className="max-w-56 whitespace-pre-line text-xs">
+              {a.tooltip}
+            </TooltipContent>
+          )}
+        </Tooltip>
       ))}
     </div>
   );

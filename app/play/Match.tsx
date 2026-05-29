@@ -39,6 +39,23 @@ function costStr(m: number, g: number): string {
   return g > 0 ? `${m}/${g}g` : `${m}`;
 }
 
+const SHORT_LABEL: Record<BuildingType, string> = {
+  nexus: "Nexus", pylon: "Pylon", gateway: "Gateway", cybernetics: "Cyber", forge: "Forge", cannon: "Cannon",
+};
+const BUILDING_DESC: Record<BuildingType, string> = {
+  nexus: "Townhall — builds Workers, resource drop-off, +15 supply.",
+  pylon: "+8 supply and projects a power field that nearby buildings need.",
+  gateway: "Produces Zealots and Stalkers. Must sit in a power field.",
+  cybernetics: "Unlocks the Stalker. Must sit in a power field.",
+  forge: "Researches Ground Weapon / Armor upgrades. Must sit in a power field.",
+  cannon: "Static defense — auto-attacks enemies in range. Must sit in a power field.",
+};
+const UNIT_DESC: Record<UnitType, string> = {
+  worker: "Mines walls, gathers minerals/gas, and constructs buildings.",
+  zealot: "Tanky melee fighter; also clears walls fast.",
+  stalker: "Ranged attacker, bonus vs Armored. Needs a Cybernetics Core.",
+};
+
 // Build the selection summary + command-card actions from current state + selection.
 function computeSelection(s: GameState, sel: Set<number>): {
   title: string; sub?: string; hint?: string; actions: HudAction[];
@@ -58,9 +75,10 @@ function computeSelection(s: GameState, sel: Set<number>): {
       const opt = (id: string, key: string, type: BuildingType, extraDisabled = false) => {
         const st = BUILDING_STATS[type];
         actions.push({
-          id, key, label: st.label,
+          id, key, label: SHORT_LABEL[type],
           cost: costStr(st.minerals, st.gas),
           disabled: p.minerals < st.minerals || p.gas < st.gas || extraDisabled,
+          tooltip: `${st.label} · ${costStr(st.minerals, st.gas)} · ${st.buildTime}s build\n${BUILDING_DESC[type]}`,
         });
       };
       opt("build:nexus", "N", "nexus");
@@ -70,7 +88,7 @@ function computeSelection(s: GameState, sel: Set<number>): {
       opt("build:forge", "F", "forge");
       opt("build:cannon", "T", "cannon");
     }
-    actions.push({ id: "stop", key: "S", label: "Stop" });
+    actions.push({ id: "stop", key: "S", label: "Stop", tooltip: "Stop — cancel current orders and hold position." });
     const hint =
       workers.length > 0
         ? "Right-click: rock = mine · mineral/gas = gather · floor = move. A = attack-move."
@@ -86,13 +104,13 @@ function computeSelection(s: GameState, sel: Set<number>): {
     if (b.built) {
       if (b.type === "nexus") {
         const ws = UNIT_STATS.worker;
-        actions.push({ id: "train:worker", key: "Q", label: "Worker", cost: costStr(ws.minerals, ws.gas), disabled: p.minerals < ws.minerals || p.supplyUsed + ws.supply > p.supplyMax });
+        actions.push({ id: "train:worker", key: "Q", label: "Worker", cost: costStr(ws.minerals, ws.gas), disabled: p.minerals < ws.minerals || p.supplyUsed + ws.supply > p.supplyMax, tooltip: `Worker · ${costStr(ws.minerals, ws.gas)} · 1 supply · ${ws.buildTime}s\n${UNIT_DESC.worker}` });
         sub = `Queue: ${b.queue.length} · supply +${st.supply}`;
       } else if (b.type === "gateway") {
         const z = UNIT_STATS.zealot, k = UNIT_STATS.stalker;
         const cyber = has("cybernetics");
-        actions.push({ id: "train:zealot", key: "Q", label: "Zealot", cost: costStr(z.minerals, z.gas), disabled: p.minerals < z.minerals || p.supplyUsed + z.supply > p.supplyMax });
-        actions.push({ id: "train:stalker", key: "W", label: "Stalker", cost: costStr(k.minerals, k.gas), disabled: !cyber || p.minerals < k.minerals || p.gas < k.gas || p.supplyUsed + k.supply > p.supplyMax });
+        actions.push({ id: "train:zealot", key: "Q", label: "Zealot", cost: costStr(z.minerals, z.gas), disabled: p.minerals < z.minerals || p.supplyUsed + z.supply > p.supplyMax, tooltip: `Zealot · ${costStr(z.minerals, z.gas)} · ${z.supply} supply · ${z.buildTime}s\n${UNIT_DESC.zealot}` });
+        actions.push({ id: "train:stalker", key: "W", label: "Stalker", cost: costStr(k.minerals, k.gas), disabled: !cyber || p.minerals < k.minerals || p.gas < k.gas || p.supplyUsed + k.supply > p.supplyMax, tooltip: `Stalker · ${costStr(k.minerals, k.gas)} · ${k.supply} supply · ${k.buildTime}s\n${UNIT_DESC.stalker}` });
         sub = cyber ? `Queue: ${b.queue.length}` : "Stalker needs a Cybernetics Core";
       } else if (b.type === "forge") {
         const wl = p.upgrades.groundWeapons;
@@ -101,8 +119,8 @@ function computeSelection(s: GameState, sel: Set<number>): {
         const aResearching = b.researchQueue.some((r) => r.kind === "armor");
         const wCost = wl < 3 ? UPGRADES.weapon[wl].minerals : 0;
         const aCost = al < 3 ? UPGRADES.armor[al].minerals : 0;
-        actions.push({ id: "research:weapon", key: "Q", label: wl >= 3 ? "Weapons MAX" : `Weapons +${wl + 1}`, cost: wl < 3 ? `${wCost}` : undefined, disabled: wl >= 3 || wResearching || p.minerals < wCost });
-        actions.push({ id: "research:armor", key: "W", label: al >= 3 ? "Armor MAX" : `Armor +${al + 1}`, cost: al < 3 ? `${aCost}` : undefined, disabled: al >= 3 || aResearching || p.minerals < aCost });
+        actions.push({ id: "research:weapon", key: "Q", label: wl >= 3 ? "Weapons MAX" : `Weapons +${wl + 1}`, cost: wl < 3 ? `${wCost}` : undefined, disabled: wl >= 3 || wResearching || p.minerals < wCost, tooltip: wl >= 3 ? "Ground Weapons fully upgraded (+3)." : `Ground Weapons +${wl + 1} · ${wCost} min — +1 attack damage to all your units.` });
+        actions.push({ id: "research:armor", key: "W", label: al >= 3 ? "Armor MAX" : `Armor +${al + 1}`, cost: al < 3 ? `${aCost}` : undefined, disabled: al >= 3 || aResearching || p.minerals < aCost, tooltip: al >= 3 ? "Ground Armor fully upgraded (+3)." : `Ground Armor +${al + 1} · ${aCost} min — +1 armor (damage reduction) to all your units.` });
         sub = `Ground Weapons +${wl} · Armor +${al}`;
       } else if (b.type === "cybernetics") {
         sub = "Unlocks the Stalker";
@@ -151,6 +169,8 @@ function Game({ onRestart }: { onRestart: () => void }) {
   const actionsRef = useRef<HudAction[]>([]);
   const groupsRef = useRef<Map<number, number[]>>(new Map());
   const markersRef = useRef<{ x: number; y: number; kind: "move" | "attack"; t: number }[]>([]);
+  const hoveredRef = useRef<number | null>(null);
+  const effectsRef = useRef<{ kind: "wallBreak" | "hit"; x: number; y: number; ex?: number; ey?: number; t: number }[]>([]);
 
   function dispatch(cmd: Command) {
     const s = stateRef.current;
@@ -363,6 +383,14 @@ function Game({ onRestart }: { onRestart: () => void }) {
     const onMouseMove = (e: MouseEvent) => {
       const { x, y } = canvasXY(e);
       mouseRef.current = { x, y };
+      const wx = cam.screenToWorldX(x);
+      const wy = cam.screenToWorldY(y);
+      const hb = state.buildings.find((b) => wx >= b.tx && wx < b.tx + b.w && wy >= b.ty && wy < b.ty + b.h);
+      if (hb) hoveredRef.current = hb.id;
+      else {
+        const hu = state.units.find((u) => Math.hypot(u.x - wx, u.y - wy) < 0.5);
+        hoveredRef.current = hu ? hu.id : null;
+      }
       const d = dragRef.current;
       if (d?.active) {
         d.x1 = x;
@@ -474,10 +502,12 @@ function Game({ onRestart }: { onRestart: () => void }) {
       }
       const view: RenderView = {
         selected: selectedRef.current,
+        hovered: hoveredRef.current,
         localPlayer: LOCAL_PLAYER,
         dragScreen: d?.active && d.moved ? { x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1 } : null,
         placement,
         markers: markersRef.current,
+        effects: effectsRef.current,
       };
       renderGame(ctx, w, h, state, cam, view);
       renderMinimap(mctx, mini.clientWidth, mini.clientHeight, state, cam, w, h);
@@ -514,6 +544,14 @@ function Game({ onRestart }: { onRestart: () => void }) {
       panFromKeys(dt);
       for (const m of markersRef.current) m.t -= dt / 0.6;
       markersRef.current = markersRef.current.filter((m) => m.t > 0);
+      // Drain sim events into transient visual effects.
+      if (state.events.length) {
+        for (const e of state.events) effectsRef.current.push({ ...e, t: 1 });
+        state.events.length = 0;
+      }
+      for (const ef of effectsRef.current) ef.t -= dt / 0.5;
+      effectsRef.current = effectsRef.current.filter((ef) => ef.t > 0);
+      if (effectsRef.current.length > 200) effectsRef.current.splice(0, effectsRef.current.length - 200);
       draw();
       raf = requestAnimationFrame(renderLoop);
     };

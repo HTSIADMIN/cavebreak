@@ -13,21 +13,24 @@ export const TILE_SIZE_PX = 32;
 // --- Resources & economy ---
 export const MINERALS_PER_TRIP = 5;
 export const GAS_PER_TRIP = 4;
+export const GOLDEN_MINERALS_PER_TRIP = 8;
+export const GOLDEN_GAS_PER_TRIP = 6;
 export const MINERAL_DEPOSIT_TOTAL = 1500;
 export const GAS_GEYSER_TOTAL = 2250;
+export const GOLDEN_MINERAL_TOTAL = 2500;
+export const GOLDEN_GAS_TOTAL = 3500;
 export const SUPPLY_CAP = 200;
 export const MINERAL_GATHER_TIME_S = 2.0;
 export const GAS_GATHER_TIME_S = 2.0;
 
 // --- Cave-specific ---
-export const WALL_MINE_TIME_S = 30;
 export const WALL_CLEAR_MINERAL_BONUS = 5;
 export const STARTING_WORKERS = 6;
 
 // --- Map ---
 export const MAP_W = 64;
 export const MAP_H = 64;
-export const START_POCKET_RADIUS = 3;
+export const START_POCKET_RADIUS = 2; // tightened — you start nearly walled in
 
 // --- Power & shields ---
 export const POWER_RADIUS = 6.5;
@@ -61,6 +64,7 @@ export interface UnitStats {
   buildTime: number;
   speed: number;
   sight: number;
+  wallMineTime: number; // seconds to clear one ROCK tile
   damage: number;
   range: number; // <= 0.6 is melee
   cooldown: number;
@@ -74,21 +78,21 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
   worker: {
     label: "Worker", minerals: 50, gas: 0, supply: 1,
     hp: 20, shields: 20, armor: 0, attributes: ["light", "mechanical"],
-    buildTime: 12, speed: 3.0, sight: 8,
+    buildTime: 12, speed: 3.0, sight: 8, wallMineTime: 10,
     damage: 5, range: 0.5, cooldown: 1.5, bonusVsArmored: 0, bonusVsLight: 0,
     producedBy: "nexus", requires: null,
   },
   zealot: {
     label: "Zealot", minerals: 100, gas: 0, supply: 2,
     hp: 100, shields: 50, armor: 1, attributes: ["light", "biological"],
-    buildTime: 27, speed: 3.15, sight: 9,
+    buildTime: 27, speed: 3.15, sight: 9, wallMineTime: 5,
     damage: 16, range: 0.5, cooldown: 1.2, bonusVsArmored: 0, bonusVsLight: 0,
     producedBy: "gateway", requires: null,
   },
   stalker: {
     label: "Stalker", minerals: 125, gas: 50, supply: 2,
     hp: 80, shields: 80, armor: 1, attributes: ["armored", "mechanical"],
-    buildTime: 32, speed: 4.0, sight: 10,
+    buildTime: 32, speed: 4.0, sight: 10, wallMineTime: 3,
     damage: 13, range: 6, cooldown: 1.4, bonusVsArmored: 5, bonusVsLight: 0,
     producedBy: "gateway", requires: "cybernetics",
   },

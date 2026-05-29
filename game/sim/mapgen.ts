@@ -1,6 +1,8 @@
 import {
   BUILDING_STATS,
   GAS_GEYSER_TOTAL,
+  GOLDEN_GAS_TOTAL,
+  GOLDEN_MINERAL_TOTAL,
   MAP_H,
   MAP_W,
   MINERAL_DEPOSIT_TOTAL,
@@ -25,13 +27,12 @@ const mirror = (v: Vec2): Vec2 => ({ x: MAP_W - 1 - v.x, y: MAP_H - 1 - v.y });
 
 interface StartPlan {
   floors: Vec2[];
-  minerals: Vec2[];
-  geysers: Vec2[];
   nexusTopLeft: Vec2;
   workers: Vec2[];
 }
 
 // Player 0's start, hand-authored in the top-left. Player 1 mirrors it (point symmetry).
+// No starting resources — they must be mined toward and found (docs/map-terrain.md).
 function plan0(): StartPlan {
   const cx = 12;
   const cy = 12;
@@ -40,20 +41,16 @@ function plan0(): StartPlan {
   for (let y = cy - r; y <= cy + r; y++) {
     for (let x = cx - r; x <= cx + r; x++) floors.push({ x, y });
   }
-  const minerals: Vec2[] = [];
-  for (let x = cx - 2; x <= cx + 2; x++) minerals.push({ x, y: cy - r - 1 }); // row just outside pocket
   return {
     floors,
-    minerals,
-    geysers: [{ x: cx - r - 1, y: cy }],
     nexusTopLeft: { x: cx - 1, y: cy - 1 },
     workers: [
-      { x: cx - 3, y: cy - 2 },
-      { x: cx - 2, y: cy - 3 },
-      { x: cx - 3, y: cy + 2 },
-      { x: cx + 2, y: cy - 3 },
-      { x: cx + 2, y: cy + 2 },
+      { x: cx - 2, y: cy - 2 },
+      { x: cx + 2, y: cy - 2 },
       { x: cx - 2, y: cy + 2 },
+      { x: cx + 2, y: cy + 2 },
+      { x: cx - 2, y: cy },
+      { x: cx + 2, y: cy },
     ].slice(0, STARTING_WORKERS),
   };
 }
@@ -61,8 +58,6 @@ function plan0(): StartPlan {
 function mirrorPlan(p: StartPlan): StartPlan {
   return {
     floors: p.floors.map(mirror),
-    minerals: p.minerals.map(mirror),
-    geysers: p.geysers.map(mirror),
     nexusTopLeft: mirror({ x: p.nexusTopLeft.x + 1, y: p.nexusTopLeft.y + 1 }),
     workers: p.workers.map(mirror),
   };
@@ -92,14 +87,6 @@ export function createInitialState(seed = 1337): GameState {
 
   plans.forEach((plan, owner) => {
     for (const f of plan.floors) setTile(grid, f.x, f.y, TileType.FLOOR);
-    for (const m of plan.minerals) {
-      setTile(grid, m.x, m.y, TileType.MINERAL);
-      deposits.push({ id: nextId++, kind: "mineral", tx: m.x, ty: m.y, remaining: MINERAL_DEPOSIT_TOTAL });
-    }
-    for (const g of plan.geysers) {
-      setTile(grid, g.x, g.y, TileType.GEYSER);
-      deposits.push({ id: nextId++, kind: "gas", tx: g.x, ty: g.y, remaining: GAS_GEYSER_TOTAL });
-    }
 
     const ns = BUILDING_STATS.nexus;
     buildings.push({
@@ -141,7 +128,7 @@ export function createInitialState(seed = 1337): GameState {
         shields: ws.shields,
         maxShields: ws.shields,
         shieldRegenCd: 0,
-        state: "harvesting", // auto-assigns to the nearest mineral patch on the first tick
+        state: "idle", // nothing reachable yet — mine out to find resources
         path: null,
         moveGoal: null,
         mineTile: null,
@@ -170,13 +157,13 @@ export function createInitialState(seed = 1337): GameState {
     });
   });
 
-  // Scattered, point-symmetric expansion fields to reward mining outward (docs/map-terrain.md).
+  // --- Resource fields (all findable, embedded in rock) ---
   const rng = mulberry32(seed);
-  const nearStart = (cx: number, cy: number) =>
-    nexusCenters.some((c) => (c.x - cx) ** 2 + (c.y - cy) ** 2 < 8 * 8);
+  const tooCloseToStart = (cx: number, cy: number) =>
+    nexusCenters.some((c) => (c.x - cx) ** 2 + (c.y - cy) ** 2 < 4.5 * 4.5);
 
-  const placeCluster = (cx: number, cy: number, size: number) => {
-    if (nearStart(cx, cy)) return;
+  const placeCluster = (cx: number, cy: number, size: number, golden: boolean) => {
+    if (tooCloseToStart(cx, cy)) return;
     const offs = [
       [0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1],
     ];
@@ -187,7 +174,10 @@ export function createInitialState(seed = 1337): GameState {
       const y = cy + dy;
       if (getTile(grid, x, y) !== TileType.ROCK) continue;
       setTile(grid, x, y, TileType.MINERAL);
-      deposits.push({ id: nextId++, kind: "mineral", tx: x, ty: y, remaining: MINERAL_DEPOSIT_TOTAL });
+      deposits.push({
+        id: nextId++, kind: "mineral", tx: x, ty: y,
+        remaining: golden ? GOLDEN_MINERAL_TOTAL : MINERAL_DEPOSIT_TOTAL, golden,
+      });
       placed++;
     }
     for (const [dx, dy] of [[2, 0], [0, 2], [-2, 0], [0, -2]]) {
@@ -195,25 +185,62 @@ export function createInitialState(seed = 1337): GameState {
       const y = cy + dy;
       if (getTile(grid, x, y) === TileType.ROCK) {
         setTile(grid, x, y, TileType.GEYSER);
-        deposits.push({ id: nextId++, kind: "gas", tx: x, ty: y, remaining: GAS_GEYSER_TOTAL });
+        deposits.push({
+          id: nextId++, kind: "gas", tx: x, ty: y,
+          remaining: golden ? GOLDEN_GAS_TOTAL : GAS_GEYSER_TOTAL, golden,
+        });
         break;
       }
     }
   };
 
-  // Symmetric anchor pairs (each is the point-mirror of its partner) + a contested center.
-  const pairs: [Vec2, Vec2][] = [
+  // A couple of normal fields close to each start (a short dig away), mirrored for fairness.
+  for (const a of [{ x: 18, y: 12 }, { x: 12, y: 18 }]) {
+    placeCluster(a.x, a.y, 5, false);
+    const m = mirror(a);
+    placeCluster(m.x, m.y, 5, false);
+  }
+  // Mid-map normal expansions (symmetric pairs).
+  const normalPairs: [Vec2, Vec2][] = [
     [{ x: 16, y: 32 }, { x: 47, y: 31 }],
     [{ x: 32, y: 16 }, { x: 31, y: 47 }],
     [{ x: 48, y: 32 }, { x: 15, y: 31 }],
     [{ x: 32, y: 48 }, { x: 31, y: 15 }],
   ];
-  for (const [a, b] of pairs) {
-    const size = 4 + Math.floor(rng() * 3); // 4–6, applied to both sides for fairness
-    placeCluster(a.x, a.y, size);
-    placeCluster(b.x, b.y, size);
+  for (const [a, b] of normalPairs) {
+    const size = 4 + Math.floor(rng() * 3);
+    placeCluster(a.x, a.y, size, false);
+    placeCluster(b.x, b.y, size, false);
   }
-  placeCluster(32, 32, 6);
+  // Golden fields — high yield, out in contested space (reward for expanding).
+  placeCluster(32, 32, 6, true); // dead center, contested
+  for (const [a, b] of [[{ x: 22, y: 42 }, { x: 41, y: 21 }], [{ x: 42, y: 22 }, { x: 21, y: 41 }]] as [Vec2, Vec2][]) {
+    placeCluster(a.x, a.y, 5, true);
+    placeCluster(b.x, b.y, 5, true);
+  }
+
+  // Carve a winding cave corridor connecting the two starts through the contested
+  // center, so armies can reach each other after breaking out (docs/map-terrain.md).
+  // Resources stay embedded in rock (mineral/geyser tiles are left intact).
+  const carve = (ax: number, ay: number, bx: number, by: number, rad: number) => {
+    const steps = Math.max(Math.abs(bx - ax), Math.abs(by - ay), 1);
+    for (let i = 0; i <= steps; i++) {
+      const x = Math.round(ax + ((bx - ax) * i) / steps);
+      const y = Math.round(ay + ((by - ay) * i) / steps);
+      for (let dy = -rad; dy <= rad; dy++) {
+        for (let dx = -rad; dx <= rad; dx++) {
+          if (getTile(grid, x + dx, y + dy) === TileType.ROCK) setTile(grid, x + dx, y + dy, TileType.FLOOR);
+        }
+      }
+    }
+  };
+  const c0 = nexusCenters[0];
+  const c1 = nexusCenters[1];
+  const mid = { x: MAP_W / 2, y: MAP_H / 2 };
+  carve(c0.x, c0.y, mid.x - 6, mid.y + 6, 1);
+  carve(mid.x - 6, mid.y + 6, mid.x, mid.y, 1);
+  carve(mid.x, mid.y, mid.x + 6, mid.y - 6, 1);
+  carve(mid.x + 6, mid.y - 6, c1.x, c1.y, 1);
 
   return {
     tick: 0,
@@ -225,5 +252,6 @@ export function createInitialState(seed = 1337): GameState {
     nextId,
     winner: null,
     visibility: new Uint8Array(MAP_W * MAP_H),
+    events: [],
   };
 }

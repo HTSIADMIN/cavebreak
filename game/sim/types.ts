@@ -46,6 +46,16 @@ export interface Deposit {
   tx: number;
   ty: number;
   remaining: number;
+  golden: boolean; // high-yield node (bigger payload + larger per-trip load)
+}
+
+// Transient events emitted by the sim for the view to animate (drained each frame).
+export interface GameEvent {
+  kind: "wallBreak" | "hit";
+  x: number;
+  y: number;
+  ex?: number; // for "hit": target point (draws an impact line)
+  ey?: number;
 }
 
 // Combat attributes drive bonus-damage counters (docs/combat.md).
@@ -145,6 +155,8 @@ export interface GameState {
   winner: PlayerId | null;
   // Local player's (player 0) visibility for rendering: 0 hidden, 1 explored, 2 visible.
   visibility: Uint8Array;
+  // Transient per-step events for the view to animate; the view drains them each frame.
+  events: GameEvent[];
 }
 
 export type Command =

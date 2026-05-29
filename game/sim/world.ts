@@ -2,6 +2,8 @@ import {
   BUILDING_STATS,
   GAS_GATHER_TIME_S,
   GAS_PER_TRIP,
+  GOLDEN_GAS_PER_TRIP,
+  GOLDEN_MINERALS_PER_TRIP,
   MINERALS_PER_TRIP,
   MINERAL_GATHER_TIME_S,
   SHIELD_REGEN_DELAY,
@@ -10,7 +12,6 @@ import {
   UNIT_STATS,
   UPGRADES,
   WALL_CLEAR_MINERAL_BONUS,
-  WALL_MINE_TIME_S,
 } from "./constants";
 import { computeVisibility } from "./fog";
 import { getTile, inBounds, isAdjacentToTile, isWalkable, nearestAdjacentFloor, setTile } from "./grid";
@@ -22,6 +23,7 @@ import {
   BuildingType,
   Command,
   Deposit,
+  GameEvent,
   GameState,
   PlayerId,
   TileType,
@@ -49,6 +51,11 @@ function getEntity(s: GameState, id: number): Unit | Building | undefined {
 }
 function isBuildingEntity(e: Unit | Building): e is Building {
   return (e as Building).tx !== undefined;
+}
+
+function pushEvent(s: GameState, e: GameEvent) {
+  s.events.push(e);
+  if (s.events.length > 300) s.events.shift();
 }
 
 function buildingCenter(b: Building): Vec2 {
@@ -311,6 +318,8 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
         if (u.attackCd <= 0 && stats.damage > 0) {
           dealDamage(s, u.owner, stats.damage, stats.bonusVsArmored, stats.bonusVsLight, true, tgt);
           u.attackCd = stats.cooldown;
+          const tc = entityCenter(tgt);
+          pushEvent(s, { kind: "hit", x: u.x, y: u.y, ex: tc.x, ey: tc.y });
         }
       } else {
         const c = entityCenter(tgt);
@@ -342,9 +351,10 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       if (res === "blocked") return becomeIdle(u);
       if (res !== "arrived") return;
       u.mineProgress += dt;
-      if (u.mineProgress >= WALL_MINE_TIME_S) {
+      if (u.mineProgress >= UNIT_STATS[u.type].wallMineTime) {
         setTile(s.grid, t.x, t.y, TileType.FLOOR);
         s.players[u.owner].minerals += WALL_CLEAR_MINERAL_BONUS;
+        pushEvent(s, { kind: "wallBreak", x: t.x + 0.5, y: t.y + 0.5 });
         becomeIdle(u);
       }
       return;
@@ -364,7 +374,10 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       const gatherTime = dep.kind === "gas" ? GAS_GATHER_TIME_S : MINERAL_GATHER_TIME_S;
       u.gatherProgress += dt;
       if (u.gatherProgress >= gatherTime) {
-        const load = dep.kind === "gas" ? GAS_PER_TRIP : MINERALS_PER_TRIP;
+        const load =
+          dep.kind === "gas"
+            ? dep.golden ? GOLDEN_GAS_PER_TRIP : GAS_PER_TRIP
+            : dep.golden ? GOLDEN_MINERALS_PER_TRIP : MINERALS_PER_TRIP;
         const amount = Math.min(load, dep.remaining);
         dep.remaining -= amount;
         u.carrying = { kind: dep.kind, amount };
@@ -556,6 +569,7 @@ function updateBuildingCombat(s: GameState, dt: number) {
     if (target && b.attackCd <= 0) {
       dealDamage(s, b.owner, st.damage, 0, 0, false, target);
       b.attackCd = st.cooldown;
+      pushEvent(s, { kind: "hit", x: b.tx + b.w / 2, y: b.ty + b.h / 2, ex: target.x, ey: target.y });
     }
   }
 }
@@ -737,7 +751,7 @@ export function applyCommand(s: GameState, cmd: Command): void {
       if (getTile(s.grid, cmd.tx, cmd.ty) !== TileType.ROCK) return;
       for (const id of cmd.unitIds) {
         const u = getUnit(s, id);
-        if (!u || u.type !== "worker") continue;
+        if (!u) continue; // any unit can mine walls (combat units faster)
         u.state = "mining_wall";
         u.mineTile = { x: cmd.tx, y: cmd.ty };
         u.mineProgress = 0;
@@ -885,6 +899,35 @@ function bestDigTile(s: GameState, reach: Set<number>, target: Vec2, exclude: Se
   return best;
 }
 
+// Assign up to `crew` free workers to mine the frontier tiles closest to `target`,
+// extending a tunnel that direction. Shared by economy + offensive digging.
+function digToward(s: GameState, units: Unit[], start: Vec2, target: Vec2, crew: number) {
+  const reach = aiReachableFloor(s, start);
+  const W = s.grid.width;
+  // Only units standing in the same reachable region can actually get to the frontier.
+  const inReach = (u: Unit) => reach.has(Math.floor(u.y) * W + Math.floor(u.x));
+  const beingMined = new Set(
+    units.filter((u) => u.state === "mining_wall" && u.mineTile).map((u) => u.mineTile!.y * W + u.mineTile!.x)
+  );
+  const diggers = units.filter((u) => u.state === "mining_wall" && inReach(u)).length;
+  for (let i = 0; i < crew - diggers; i++) {
+    const tile = bestDigTile(s, reach, target, beingMined);
+    if (!tile) break;
+    const w = units.find(
+      (u) => inReach(u) && (u.state === "harvesting" || u.state === "idle" || u.state === "attack_moving" || u.state === "moving")
+    );
+    if (!w) break;
+    w.state = "mining_wall";
+    w.mineTile = { x: tile.x, y: tile.y };
+    w.mineProgress = 0;
+    w.depositId = null;
+    w.carrying = null;
+    w.targetId = null;
+    w.path = null;
+    beingMined.add(tile.y * W + tile.x);
+  }
+}
+
 function runAI(s: GameState, _dt: number) {
   if (s.tick % 16 !== 0) return; // ~once/second
   const owner: PlayerId = 1;
@@ -910,16 +953,64 @@ function runAI(s: GameState, _dt: number) {
   const gatewayBuilt = gateways.some((b) => b.built);
   const cyberBuilt = myBuildings.some((b) => b.type === "cybernetics" && b.built);
 
-  // Keep ~2 workers on gas so we can afford Stalkers + tech.
+  // --- Economy (minerals first; cap gas at 2; dig to new minerals when tapped out). ---
+  // Anchor digging at a worker's tile (always on reachable floor) rather than the
+  // Nexus border, which can be fully walled off by the AI's own buildings.
+  const start: Vec2 | null =
+    workers.length > 0
+      ? { x: Math.floor(workers[0].x), y: Math.floor(workers[0].y) }
+      : approachTileForBuilding(s, nexus, nc);
+  const isGasWorker = (w: Unit) => {
+    const d = w.depositId != null ? getDeposit(s, w.depositId) : undefined;
+    return !!d && d.kind === "gas";
+  };
+
+  // If the nearest minerals aren't reachable, dig toward them before anything else.
+  // Only dig to minerals when the economy has actually stalled (no one delivering and
+  // low on minerals) — otherwise a far unreachable "nearest" deposit would wrongly
+  // block all tech/army even while other deposits are being mined.
+  const earning = workers.some((w) => w.state === "returning_resource" && !!w.carrying && w.carrying.kind === "mineral");
+  const nearMin = nearestDeposit(s, "mineral", nc);
+  if (nearMin && start && !earning) {
+    const adj = nearestAdjacentFloor(s.grid, nearMin.tx, nearMin.ty, nc);
+    const reachable = !!adj && findPath(s.grid, s.buildings, { x: start.x + 0.5, y: start.y + 0.5 }, adj) !== null;
+    if (!reachable) {
+      // Dig toward minerals in the background, but DON'T block tech/army — the AI
+      // spends banked minerals on buildings/units while diggers open new patches.
+      digToward(s, workers, start, { x: nearMin.tx + 0.5, y: nearMin.ty + 0.5 }, 2);
+    }
+  }
+
+  // Re-task idle / depleted workers to minerals (don't disturb diggers, builders, haulers).
+  for (const w of workers) {
+    if (w.state === "mining_wall" || w.state === "constructing" || w.state === "returning_resource") continue;
+    if (isGasWorker(w)) continue;
+    const dep = w.depositId != null ? getDeposit(s, w.depositId) : undefined;
+    if (w.state === "idle" || !dep || dep.remaining <= 0) {
+      w.state = "harvesting";
+      w.depositId = null;
+    }
+  }
+  // Cap gas at 2 so minerals stay the priority.
+  let gasCount = workers.filter(isGasWorker).length;
+  for (const w of workers) {
+    if (gasCount <= 2) break;
+    if (isGasWorker(w)) {
+      w.depositId = null;
+      w.state = "harvesting";
+      gasCount--;
+    }
+  }
   const gasDep = nearestDeposit(s, "gas", nc);
-  if (gasDep) {
-    const onGas = workers.filter((u) => u.depositId === gasDep.id).length;
-    if (onGas < 2) {
-      const w = workers.find((u) => u.state === "harvesting" && u.depositId !== gasDep.id);
-      if (w) {
-        w.depositId = gasDep.id;
-        w.state = "harvesting";
-        w.path = null;
+  if (gasDep && gasCount < 2 && workers.length >= 8 && start) {
+    const adj = nearestAdjacentFloor(s.grid, gasDep.tx, gasDep.ty, nc);
+    const gasReachable = !!adj && findPath(s.grid, s.buildings, { x: start.x + 0.5, y: start.y + 0.5 }, adj) !== null;
+    if (gasReachable) {
+      const cand = workers.find((w) => w.state === "harvesting" && !isGasWorker(w));
+      if (cand) {
+        cand.depositId = gasDep.id;
+        cand.state = "harvesting";
+        cand.path = null;
       }
     }
   }
@@ -966,54 +1057,25 @@ function runAI(s: GameState, _dt: number) {
       enqueueTrain(s, gw, "zealot");
     }
   }
-  // 8.5 Offensive mining — once an army is forming, dig a tunnel toward the enemy
-  // so the army can break through the solid rock between the two bases.
-  if (army.length >= 4) {
+  // 8.5 Break through: tunnel toward the enemy with fast-digging combat units (they
+  // mine faster than workers); once a path connects, send the whole army in.
+  if (army.length >= 3 && start) {
     const enemyMain =
       s.buildings.find((b) => b.owner !== owner && b.type === "nexus") ??
       s.buildings.find((b) => b.owner !== owner);
     if (enemyMain) {
-      const target = buildingCenter(enemyMain);
-      const start = approachTileForBuilding(s, nexus, nc);
-      const goal = approachTileForBuilding(s, enemyMain, target);
-      const connected =
-        !!start && !!goal && findPath(s.grid, s.buildings, { x: start.x + 0.5, y: start.y + 0.5 }, goal) !== null;
-      if (!connected && start) {
-        const reach = aiReachableFloor(s, start);
-        const beingMined = new Set(
-          workers.filter((w) => w.state === "mining_wall" && w.mineTile).map((w) => w.mineTile!.y * s.grid.width + w.mineTile!.x)
-        );
-        const diggers = workers.filter((w) => w.state === "mining_wall").length;
-        // Dedicate a wide dig crew so the tunnel actually reaches across the map.
-        const digCrew = army.length >= 10 ? 6 : 3;
-        for (let i = 0; i < digCrew - diggers; i++) {
-          const tile = bestDigTile(s, reach, target, beingMined);
-          if (!tile) break;
-          const w = workers.find((u) => u.state === "harvesting" || u.state === "idle");
-          if (!w) break;
-          w.state = "mining_wall";
-          w.mineTile = { x: tile.x, y: tile.y };
-          w.mineProgress = 0;
-          w.depositId = null;
-          w.carrying = null;
-          w.targetId = null;
-          w.path = null;
-          beingMined.add(tile.y * s.grid.width + tile.x);
+      const goal = approachTileForBuilding(s, enemyMain, buildingCenter(enemyMain));
+      const connected = !!goal && findPath(s.grid, s.buildings, { x: start.x + 0.5, y: start.y + 0.5 }, goal) !== null;
+      if (!connected) {
+        // Combat units first (faster diggers), spare workers as backup.
+        digToward(s, army.concat(workers), start, buildingCenter(enemyMain), army.length >= 8 ? 5 : 3);
+      } else if (goal && s.tick % (16 * 18) < 16) {
+        for (const u of army) {
+          u.attackGoal = { x: Math.floor(goal.x), y: Math.floor(goal.y) };
+          u.path = null;
+          u.targetId = null;
+          u.state = "attack_moving";
         }
-      }
-    }
-  }
-
-  // 9. Attack waves.
-  if (army.length >= 6 && s.tick % (16 * 35) < 16) {
-    const enemyNexus = s.buildings.find((b) => b.owner === 0 && b.type === "nexus");
-    if (enemyNexus) {
-      const goal = approachTileForBuilding(s, enemyNexus, buildingCenter(enemyNexus)) ?? buildingCenter(enemyNexus);
-      for (const u of army) {
-        u.attackGoal = { x: Math.floor(goal.x), y: Math.floor(goal.y) };
-        u.path = null;
-        u.targetId = null;
-        u.state = "attack_moving";
       }
     }
   }
