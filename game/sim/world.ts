@@ -1327,9 +1327,34 @@ function runAI(s: GameState, owner: PlayerId, _dt: number) {
     if (wantStalker) enqueueTrain(s, gw, "stalker");
     else if (p.minerals >= 100 + reserve) enqueueTrain(s, gw, "zealot");
   }
-  // 5. Push out once the army reaches the difficulty's threshold: tunnel toward the
-  //    nearest enemy main if not yet connected, else feed idle fighters in to attack-move.
-  if (start && army.length >= prof.attackArmy) {
+  // 5. Defend first, then attack.
+  // Defense: if any live enemy is near one of our buildings, recall the army to fight it
+  // off (attack-move onto the threatened spot — units auto-acquire the raiders). This
+  // stops the AI losing its base to a counter while its army is away. Units already
+  // locked in melee/fire ("attacking") keep fighting wherever they are.
+  let threat: Vec2 | null = null;
+  for (const b of myBuildings) {
+    const hit = s.units.some(
+      (e) => e.owner !== owner && e.hp > 0 && !s.players[e.owner].defeated && distPointToBuilding(e.x, e.y, b) < 11
+    );
+    if (hit) {
+      threat = buildingCenter(b);
+      break;
+    }
+  }
+  if (threat) {
+    const g = { x: Math.floor(threat.x), y: Math.floor(threat.y) };
+    for (const u of army) {
+      if (u.state !== "attacking") {
+        u.attackGoal = g;
+        u.path = null;
+        u.targetId = null;
+        u.state = "attack_moving";
+      }
+    }
+  } else if (start && army.length >= prof.attackArmy) {
+    // Push out: tunnel toward the nearest enemy main if not yet connected, else feed
+    // idle fighters in to attack-move.
     const enemyMain = nearestEnemyBuilding(s, owner, nc);
     if (enemyMain) {
       const goal = approachTileForBuilding(s, enemyMain, buildingCenter(enemyMain));

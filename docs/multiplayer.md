@@ -44,6 +44,8 @@ Before netcode, the game ships as **local single-player vs. AI**, and the sim al
 - **AI difficulty is decision quality only — never bonuses.** Every player (human and AI) starts identical: same 4×4 pocket, 2 workers, 50 minerals, no resource/vision/stat edge. Difficulty changes *how well* the AI plays:
   - **Decision cadence** (reaction speed, ~like APM), **worker count**, **number of Gateways** (army throughput), whether it takes **gas + Stalkers**, **Forge upgrades**, **defensive cannons**, the **army size it masses before committing**, and **focus-fire micro** (Hard).
   - Key tuning lesson: a small army dribbled into a defended base just dies, so harder AIs **mass a larger force before attacking** (higher attack threshold) rather than poking early. Verified 1v1 with both sides AI: **Hard > Medium > Easy** with no bonuses.
+  - **Base defense:** if a live enemy comes within ~11 tiles of any AI building, the AI recalls its army home to fight it off (units already in melee/fire keep fighting). This stops it losing its base to a counter while its army is away — and the slower-reacting Easy defends worse, naturally, via its longer decision cadence.
+- The HUD shows a **player roster** (top-right) in 3–4 player games: each player's color and an "out" marker when eliminated; the human sees a Victory/Defeat banner.
 
 ## Where the Sim Runs
 

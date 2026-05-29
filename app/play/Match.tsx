@@ -26,7 +26,7 @@ import {
 } from "@/game/sim";
 import { Camera } from "@/game/render/camera";
 import { renderGame, renderMinimap, RenderView } from "@/game/render/renderer";
-import { CommandCard, HudAction, HudData, SelectionPanel, TopBar, WinnerBanner } from "./Hud";
+import { CommandCard, HudAction, HudData, PlayerStatus, SelectionPanel, TopBar, WinnerBanner } from "./Hud";
 
 const LOCAL_PLAYER = 0;
 const PAN_SPEED = 24;
@@ -588,6 +588,12 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
       setHud({
         minerals: p.minerals, gas: p.gas, supplyUsed: p.supplyUsed, supplyMax: p.supplyMax,
         winner: state.winner, localPlayer: LOCAL_PLAYER, localDefeated: p.defeated,
+        players: state.players.map((pl) => ({
+          color: pl.color,
+          label: pl.id === LOCAL_PLAYER ? "You" : `AI · ${pl.difficulty ? pl.difficulty[0].toUpperCase() + pl.difficulty.slice(1) : "?"}`,
+          defeated: pl.defeated,
+          isLocal: pl.id === LOCAL_PLAYER,
+        })),
         title: selInfo.title, sub: selInfo.sub, hint: selInfo.hint, actions: selInfo.actions,
       });
     };
@@ -686,6 +692,7 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
       <div ref={wrapRef} className="relative flex-1 overflow-hidden">
         <canvas ref={canvasRef} className="block h-full w-full" onContextMenu={(e) => e.preventDefault()} />
         <TopBar {...hud} />
+        <PlayerStatus players={hud.players} />
         <WinnerBanner
           winner={hud.winner}
           localPlayer={hud.localPlayer}

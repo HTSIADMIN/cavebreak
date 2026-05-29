@@ -11,6 +11,13 @@ export interface HudAction {
   tooltip?: string;
 }
 
+export interface PlayerStatusInfo {
+  color: string;
+  label: string;
+  defeated: boolean;
+  isLocal: boolean;
+}
+
 export interface HudData {
   minerals: number;
   gas: number;
@@ -19,10 +26,27 @@ export interface HudData {
   winner: number | null;
   localPlayer: number;
   localDefeated?: boolean;
+  players?: PlayerStatusInfo[];
   title: string;
   sub?: string;
   hint?: string;
   actions: HudAction[];
+}
+
+// Top-right roster for free-for-alls: who's still in, by color. Hidden in 1v1.
+export function PlayerStatus({ players }: { players?: PlayerStatusInfo[] }) {
+  if (!players || players.length <= 2) return null;
+  return (
+    <div className="pointer-events-none absolute right-3 top-2 flex flex-col items-end gap-1 font-mono text-xs">
+      {players.map((p, i) => (
+        <div key={i} className={`flex items-center gap-1.5 ${p.defeated ? "opacity-40" : ""}`}>
+          <span className={p.defeated ? "text-zinc-500 line-through" : "text-zinc-200"}>{p.label}</span>
+          {p.defeated && <span className="text-[10px] uppercase text-red-400">out</span>}
+          <span className="inline-block h-2.5 w-2.5 rounded-sm ring-1 ring-black/40" style={{ background: p.color }} />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function TopBar({ minerals, gas, supplyUsed, supplyMax }: HudData) {
