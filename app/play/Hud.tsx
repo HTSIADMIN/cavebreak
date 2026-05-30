@@ -12,7 +12,11 @@ export interface HudAction {
   tooltip?: string;
   active?: boolean; // highlighted (e.g. the current stance)
   tone?: "default" | "danger"; // accent color
+  group?: "build" | "command"; // command-card section (separates worker build vs other actions)
 }
+
+// Shared floating-glass panel styling.
+const GLASS = "rounded-xl bg-white/5 ring-1 ring-white/10 backdrop-blur-md shadow-lg";
 
 // One chip in the unit-type quick-select bar.
 export interface QuickGroup {
@@ -66,7 +70,7 @@ export function PlayerStatus({ players }: { players?: PlayerStatusInfo[] }) {
 export function TopBar({ minerals, gas, supplyUsed, supplyMax }: HudData) {
   const capped = supplyUsed >= supplyMax;
   return (
-    <div className="pointer-events-none absolute left-0 top-0 flex gap-6 px-4 py-2 font-mono text-sm">
+    <div className={`pointer-events-none absolute left-3 top-3 z-10 flex gap-5 px-4 py-2 font-mono text-sm ${GLASS}`}>
       <Stat label="Minerals" value={Math.floor(minerals)} color="text-cyan-300" />
       <Stat label="Gas" value={Math.floor(gas)} color="text-green-300" />
       <Stat label="Supply" value={`${supplyUsed}/${supplyMax}`} color={capped ? "text-red-400" : "text-zinc-200"} />
@@ -85,48 +89,71 @@ function Stat({ label, value, color }: { label: string; value: string | number; 
 
 export function SelectionPanel({ title, sub, hint }: { title: string; sub?: string; hint?: string }) {
   return (
-    <div className="flex-1 border-x border-zinc-800 px-4 py-3">
-      <p className="text-sm font-semibold text-zinc-200">{title}</p>
-      {sub && <p className="text-xs text-zinc-400">{sub}</p>}
-      {hint && <p className="mt-2 text-xs text-zinc-500">{hint}</p>}
+    <div className={`w-64 px-4 py-3 ${GLASS}`}>
+      <p className="text-sm font-semibold text-zinc-100">{title}</p>
+      {sub && <p className="mt-0.5 text-xs text-cyan-200/80">{sub}</p>}
+      {hint && <p className="mt-2 text-[11px] leading-snug text-zinc-400">{hint}</p>}
     </div>
   );
 }
 
-export function CommandCard({ actions, onAction }: { actions: HudAction[]; onAction: (id: string) => void }) {
+function ActionButton({ a, onAction }: { a: HudAction; onAction: (id: string) => void }) {
+  const ring = a.active
+    ? a.tone === "danger"
+      ? "ring-red-400/70 bg-red-500/20"
+      : "ring-cyan-400/70 bg-cyan-500/20"
+    : "ring-white/10 bg-white/5 hover:bg-white/15";
   return (
-    <div className="grid w-72 grid-cols-3 content-start gap-1.5 p-2">
-      {actions.map((a) => {
-        const border = a.active
-          ? a.tone === "danger"
-            ? "border-red-400 bg-red-500/15"
-            : "border-cyan-400 bg-cyan-500/15"
-          : "border-zinc-800 bg-zinc-900 hover:bg-zinc-800";
-        return (
-          <Tooltip key={a.id}>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => onAction(a.id)}
-                disabled={a.disabled}
-                className={`flex h-12 flex-col items-center justify-center gap-0.5 rounded border px-1 text-center leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${border}`}
-              >
-                <span className="text-[10px] font-medium text-zinc-100">{a.label}</span>
-                <span className="flex items-center gap-1 text-[9px]">
-                  {a.cost && <span className="text-cyan-300">{a.cost}</span>}
-                  <kbd className="rounded bg-zinc-950 px-1 text-zinc-500">{a.key}</kbd>
-                </span>
-              </button>
-            </TooltipTrigger>
-            {a.tooltip && (
-              <TooltipContent side="top" className="max-w-56 whitespace-pre-line text-xs">
-                {a.tooltip}
-              </TooltipContent>
-            )}
-          </Tooltip>
-        );
-      })}
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={() => onAction(a.id)}
+          disabled={a.disabled}
+          className={`flex h-12 w-[52px] flex-col items-center justify-center gap-0.5 rounded-lg px-1 text-center leading-none ring-1 transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${ring}`}
+        >
+          <span className="text-[10px] font-medium text-zinc-100">{a.label}</span>
+          <span className="flex items-center gap-1 text-[9px]">
+            {a.cost && <span className="text-cyan-300">{a.cost}</span>}
+            <kbd className="rounded bg-black/40 px-1 text-zinc-400">{a.key}</kbd>
+          </span>
+        </button>
+      </TooltipTrigger>
+      {a.tooltip && (
+        <TooltipContent side="top" className="max-w-56 whitespace-pre-line text-xs">
+          {a.tooltip}
+        </TooltipContent>
+      )}
+    </Tooltip>
+  );
+}
+
+export function CommandCard({ actions, onAction }: { actions: HudAction[]; onAction: (id: string) => void }) {
+  if (actions.length === 0) return null;
+  const grid = (list: HudAction[]) => (
+    <div className="grid grid-cols-3 gap-1.5">
+      {list.map((a) => <ActionButton key={a.id} a={a} onAction={onAction} />)}
     </div>
   );
+  const builds = actions.filter((a) => a.group === "build");
+  const others = actions.filter((a) => a.group !== "build");
+  // For workers the build menu is split out from the other commands; everything else is flat.
+  if (builds.length > 0) {
+    return (
+      <div className={`flex items-start gap-2 p-2 ${GLASS}`}>
+        <div>
+          <p className="mb-1 px-0.5 text-[9px] uppercase tracking-wider text-zinc-500">Build</p>
+          {grid(builds)}
+        </div>
+        {others.length > 0 && (
+          <div className="border-l border-white/10 pl-2">
+            <p className="mb-1 px-0.5 text-[9px] uppercase tracking-wider text-zinc-500">Commands</p>
+            {grid(others)}
+          </div>
+        )}
+      </div>
+    );
+  }
+  return <div className={`p-2 ${GLASS}`}>{grid(others)}</div>;
 }
 
 const UNIT_GLYPH: Record<UnitType, string> = { worker: "⛏", zealot: "⚔", stalker: "⊿" };
@@ -141,20 +168,19 @@ export function QuickSelectBar({
 }) {
   if (!groups || groups.length === 0) return null;
   return (
-    <div className="flex items-center gap-1.5 border-b border-zinc-800 bg-zinc-950/80 px-2 py-1">
-      <span className="mr-1 text-[10px] uppercase tracking-wider text-zinc-600">Army</span>
+    <div className={`flex items-center gap-1.5 px-2 py-1 ${GLASS}`}>
       {groups.map((g) => (
         <button
           key={g.type}
           onClick={() => onSelectType(g.type)}
           title={`Select all ${g.label}s (${g.count})`}
-          className={`flex items-center gap-1.5 rounded border px-2 py-1 text-xs transition-colors ${
-            g.selected ? "border-cyan-400 bg-cyan-500/15" : "border-zinc-800 bg-zinc-900 hover:bg-zinc-800"
+          className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs ring-1 transition-colors ${
+            g.selected ? "ring-cyan-400/70 bg-cyan-500/20" : "ring-white/10 bg-white/5 hover:bg-white/15"
           }`}
         >
           <span className="text-sm leading-none">{UNIT_GLYPH[g.type]}</span>
           <span className="font-medium text-zinc-200">{g.label}</span>
-          <span className="rounded bg-zinc-950 px-1 font-mono text-[10px] text-zinc-400">{g.count}</span>
+          <span className="rounded bg-black/40 px-1 font-mono text-[10px] text-zinc-400">{g.count}</span>
         </button>
       ))}
     </div>
