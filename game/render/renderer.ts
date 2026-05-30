@@ -95,10 +95,8 @@ export function renderGame(
         ctx.fillStyle = "rgba(120,170,255,0.14)";
         ctx.fillRect(sx, sy, scale + 1, scale + 1);
       }
-      if (vis === 1) {
-        ctx.fillStyle = "rgba(0,0,0,0.45)";
-        ctx.fillRect(sx, sy, scale + 1, scale + 1);
-      }
+      // Explored-but-not-current (vis 1) dimming is applied AFTER the flashlight pass below
+      // (the fog-overlay pass), so cone light can't leak onto / "reveal" fogged terrain.
     }
   }
 
@@ -135,15 +133,28 @@ export function renderGame(
     }
   }
 
-  // Flashlight vision cones for the local player's units — a fog-of-war "flashlight" look,
-  // drawn additively over the ground (entities are painted on top afterwards).
+  // Flashlight vision cones for the local player's units — a SUBTLE fog-of-war "flashlight"
+  // glow in front of each unit, drawn additively over the ground (entities paint on top, and
+  // the fog-overlay pass right below clips it to currently-seen tiles).
   for (const u of state.units) {
     if (u.owner !== local) continue;
     const cx = cam.worldToScreenX(u.x);
     const cy = cam.worldToScreenY(u.y);
     const pad = scale * 9;
     if (cx < -pad || cy < -pad || cx > w + pad || cy > h + pad) continue;
-    drawCone(ctx, cx, cy, UNIT_STATS[u.type].sight * scale * 1.2, u.facing, 0.16);
+    drawCone(ctx, cx, cy, UNIT_STATS[u.type].sight * scale, u.facing, 0.07);
+  }
+
+  // Fog overlay — re-assert fog ON TOP of the flashlight so only currently-seen (vis 2) tiles
+  // stay lit. Unexplored stays black; explored-but-not-current goes dim. This is what keeps the
+  // fog honest: a unit/building reveals its current surroundings, everything else is dark.
+  for (let ty = y0; ty <= y1; ty++) {
+    for (let tx = x0; tx <= x1; tx++) {
+      const v = visibility[idx(grid, tx, ty)];
+      if (v === 2) continue;
+      ctx.fillStyle = v === 0 ? "#050507" : "rgba(0,0,0,0.5)";
+      ctx.fillRect(cam.worldToScreenX(tx), cam.worldToScreenY(ty), scale + 1, scale + 1);
+    }
   }
 
   // Power-radius preview: hovered pylon (+ link to nearest Nexus) or pylon placement ghost.
