@@ -99,38 +99,38 @@ function computeSelection(s: GameState, sel: Set<number>): {
       const opt = (id: string, key: string, type: BuildingType, extraDisabled = false) => {
         const st = BUILDING_STATS[type];
         actions.push({
-          id, key, label: SHORT_LABEL[type],
+          id, key, label: SHORT_LABEL[type], group: "build",
           cost: costStr(st.minerals, st.gas),
           disabled: p.minerals < st.minerals || p.gas < st.gas || extraDisabled,
           tooltip: `${st.label} · ${costStr(st.minerals, st.gas)} · ${st.buildTime}s build\n${BUILDING_DESC[type]}`,
         });
       };
-      opt("build:nexus", "N", "nexus");
-      opt("build:pylon", "E", "pylon");
-      opt("build:gateway", "R", "gateway");
-      opt("build:cybernetics", "C", "cybernetics", !has("gateway"));
-      opt("build:forge", "F", "forge");
-      opt("build:cannon", "T", "cannon");
+      opt("build:nexus", "1", "nexus");
+      opt("build:pylon", "2", "pylon");
+      opt("build:gateway", "3", "gateway");
+      opt("build:cybernetics", "4", "cybernetics", !has("gateway"));
+      opt("build:forge", "5", "forge");
+      opt("build:cannon", "6", "cannon");
       actions.push({
-        id: "areaMine", key: "M", label: "Area Mine",
+        id: "areaMine", key: "M", label: "Area Mine", group: "command",
         tooltip: "Area Mine (M) — drag a box over rock walls to queue these workers to clear the whole region.",
       });
     }
-    actions.push({ id: "stop", key: "S", label: "Stop", tooltip: "Stop — cancel current orders and hold position." });
+    actions.push({ id: "stop", key: "Q", label: "Stop", group: "command", tooltip: "Stop (Q) — cancel current orders and hold position." });
     const combat = units.filter((u) => u.type !== "worker");
     if (combat.length > 0) {
       const st = combat[0].stance;
       const next = STANCE_ORDER[(STANCE_ORDER.indexOf(st) + 1) % STANCE_ORDER.length];
       actions.push({
-        id: "stance:cycle", key: "Y", label: STANCE_LABEL[st],
+        id: "stance:cycle", key: "Y", label: STANCE_LABEL[st], group: "command",
         active: st !== "aggressive", tone: st === "holdFire" ? "danger" : "default",
         tooltip: `Stance: ${STANCE_LABEL[st]} — click / Y to cycle → ${STANCE_LABEL[next]}.\n${STANCE_DESC[st]}`,
       });
     }
     const hint =
       workers.length > 0
-        ? "Right-click: rock = mine · mineral/gas = gather · floor = move. A = attack-move · M = area mine."
-        : "A = attack-move · right-click an enemy to attack · Y = stance.";
+        ? "Right-click: rock = mine · mineral/gas = gather · floor = move. E = attack-move · M = area mine. WASD/arrows pan."
+        : "E = attack-move · right-click an enemy to attack · Y = stance · Q = stop. WASD/arrows pan.";
     const sub =
       units.length === 1
         ? stateLabel(units[0].state) + (units[0].type !== "worker" ? ` · ${STANCE_LABEL[units[0].stance]}` : "")
@@ -154,7 +154,7 @@ function computeSelection(s: GameState, sel: Set<number>): {
         const z = UNIT_STATS.zealot, k = UNIT_STATS.stalker;
         const cyber = has("cybernetics");
         actions.push({ id: "train:zealot", key: "Q", label: z.label, cost: costStr(z.minerals, z.gas), disabled: p.minerals < z.minerals || p.supplyUsed + z.supply > p.supplyMax, tooltip: `${z.label} · ${costStr(z.minerals, z.gas)} · ${z.supply} supply · ${z.buildTime}s\n${UNIT_DESC.zealot}` });
-        actions.push({ id: "train:stalker", key: "W", label: k.label, cost: costStr(k.minerals, k.gas), disabled: !cyber || p.minerals < k.minerals || p.gas < k.gas || p.supplyUsed + k.supply > p.supplyMax, tooltip: `${k.label} · ${costStr(k.minerals, k.gas)} · ${k.supply} supply · ${k.buildTime}s\n${UNIT_DESC.stalker}` });
+        actions.push({ id: "train:stalker", key: "E", label: k.label, cost: costStr(k.minerals, k.gas), disabled: !cyber || p.minerals < k.minerals || p.gas < k.gas || p.supplyUsed + k.supply > p.supplyMax, tooltip: `${k.label} · ${costStr(k.minerals, k.gas)} · ${k.supply} supply · ${k.buildTime}s\n${UNIT_DESC.stalker}` });
         sub = cyber ? `Queue: ${b.queue.length}` : `${k.label} needs a Tech Lab`;
       } else if (b.type === "forge") {
         const wl = p.upgrades.groundWeapons;
@@ -164,7 +164,7 @@ function computeSelection(s: GameState, sel: Set<number>): {
         const wCost = wl < 3 ? UPGRADES.weapon[wl].minerals : 0;
         const aCost = al < 3 ? UPGRADES.armor[al].minerals : 0;
         actions.push({ id: "research:weapon", key: "Q", label: wl >= 3 ? "Weapons MAX" : `Weapons +${wl + 1}`, cost: wl < 3 ? `${wCost}` : undefined, disabled: wl >= 3 || wResearching || p.minerals < wCost, tooltip: wl >= 3 ? "Ground Weapons fully upgraded (+3)." : `Ground Weapons +${wl + 1} · ${wCost} min — +1 attack damage to all your units.` });
-        actions.push({ id: "research:armor", key: "W", label: al >= 3 ? "Armor MAX" : `Armor +${al + 1}`, cost: al < 3 ? `${aCost}` : undefined, disabled: al >= 3 || aResearching || p.minerals < aCost, tooltip: al >= 3 ? "Ground Armor fully upgraded (+3)." : `Ground Armor +${al + 1} · ${aCost} min — +1 armor (damage reduction) to all your units.` });
+        actions.push({ id: "research:armor", key: "E", label: al >= 3 ? "Armor MAX" : `Armor +${al + 1}`, cost: al < 3 ? `${aCost}` : undefined, disabled: al >= 3 || aResearching || p.minerals < aCost, tooltip: al >= 3 ? "Ground Armor fully upgraded (+3)." : `Ground Armor +${al + 1} · ${aCost} min — +1 armor (damage reduction) to all your units.` });
         sub = `Ground Weapons +${wl} · Armor +${al}`;
       } else if (b.type === "cybernetics") {
         sub = `Unlocks the ${UNIT_STATS.stalker.label}`;
@@ -566,8 +566,8 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
     };
 
     const onMouseDown = (e: MouseEvent) => {
-      const { x, y, inside } = canvasXY(e);
-      if (!inside) return;
+      if (e.target !== canvas) return; // clicks on the floating HUD panels shouldn't reach the map
+      const { x, y } = canvasXY(e);
       if (e.button === 0) {
         if (placementRef.current) {
           const t = placementTile();
@@ -682,8 +682,8 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
     };
 
     const onWheel = (e: WheelEvent) => {
-      const { x, y, inside } = canvasXY(e);
-      if (!inside) return;
+      if (e.target !== canvas) return;
+      const { x, y } = canvasXY(e);
       e.preventDefault();
       const wx = cam.screenToWorldX(x);
       const wy = cam.screenToWorldY(y);
@@ -695,9 +695,16 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
 
     const onKeyDown = (e: KeyboardEvent) => {
       const k = e.key;
-      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(k)) {
+      const lk = k.toLowerCase();
+      // Camera pan (held): arrows + WASD. Intercept first so WASD never triggers a command.
+      if (k === "ArrowUp" || k === "ArrowDown" || k === "ArrowLeft" || k === "ArrowRight") {
         e.preventDefault();
         keysRef.current.add(k);
+        return;
+      }
+      if (lk === "w" || lk === "a" || lk === "s" || lk === "d") {
+        e.preventDefault();
+        keysRef.current.add(lk);
         return;
       }
       if (/^[1-9]$/.test(k)) {
@@ -705,21 +712,26 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
         const g = Number(k);
         if (e.ctrlKey || e.metaKey || e.shiftKey) {
           groupsRef.current.set(g, [...selectedRef.current]);
-        } else {
-          const ids = groupsRef.current.get(g);
-          if (ids && ids.length) {
-            selectedRef.current = new Set(
-              ids.filter(
-                (id) =>
-                  state.units.some((u) => u.id === id && u.owner === LOCAL_PLAYER) ||
-                  state.buildings.some((b) => b.id === id && b.owner === LOCAL_PLAYER)
-              )
-            );
-          }
+          return;
+        }
+        // A numbered command-card action (e.g. a build) wins; otherwise recall the control group.
+        const numbered = actionsRef.current.find((a) => a.key === k && !a.disabled);
+        if (numbered) {
+          onAction(numbered.id);
+          return;
+        }
+        const ids = groupsRef.current.get(g);
+        if (ids && ids.length) {
+          selectedRef.current = new Set(
+            ids.filter(
+              (id) =>
+                state.units.some((u) => u.id === id && u.owner === LOCAL_PLAYER) ||
+                state.buildings.some((b) => b.id === id && b.owner === LOCAL_PLAYER)
+            )
+          );
         }
         return;
       }
-      const lk = k.toLowerCase();
       if (lk === "escape") {
         if (placementRef.current || attackModeRef.current || areaMineModeRef.current || rallyModeRef.current) {
           placementRef.current = null;
@@ -731,14 +743,17 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
         }
         return;
       }
-      if (lk === "a" && selectedUnitIds().length > 0) {
-        attackModeRef.current = true;
+      if (lk === "e" && selectedUnitIds().length > 0) {
+        attackModeRef.current = true; // attack-move (A is now a pan key)
         return;
       }
       const action = actionsRef.current.find((a) => a.key.toLowerCase() === lk && !a.disabled);
       if (action) onAction(action.id);
     };
-    const onKeyUp = (e: KeyboardEvent) => keysRef.current.delete(e.key);
+    const onKeyUp = (e: KeyboardEvent) => {
+      keysRef.current.delete(e.key);
+      keysRef.current.delete(e.key.toLowerCase());
+    };
 
     window.addEventListener("mousedown", onMouseDown);
     window.addEventListener("mousemove", onMouseMove);
@@ -750,10 +765,10 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
     const panFromKeys = (dt: number) => {
       let dx = 0, dy = 0;
       const keys = keysRef.current;
-      if (keys.has("ArrowLeft")) dx -= 1;
-      if (keys.has("ArrowRight")) dx += 1;
-      if (keys.has("ArrowUp")) dy -= 1;
-      if (keys.has("ArrowDown")) dy += 1;
+      if (keys.has("ArrowLeft") || keys.has("a")) dx -= 1;
+      if (keys.has("ArrowRight") || keys.has("d")) dx += 1;
+      if (keys.has("ArrowUp") || keys.has("w")) dy -= 1;
+      if (keys.has("ArrowDown") || keys.has("s")) dy += 1;
       if (dx || dy) cam.pan(dx * PAN_SPEED * dt, dy * PAN_SPEED * dt, MAP_W, MAP_H, sizeRef.current.w, sizeRef.current.h);
     };
 
@@ -920,39 +935,52 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
   };
 
   return (
-    <div className="flex h-screen w-screen select-none flex-col bg-black text-zinc-100">
-      <div ref={wrapRef} className="relative flex-1 overflow-hidden">
+    <div className="relative h-screen w-screen select-none overflow-hidden bg-black text-zinc-100">
+      {/* Full-screen battlefield; the HUD floats over it as glass panels. */}
+      <div ref={wrapRef} className="absolute inset-0">
         <canvas ref={canvasRef} className="block h-full w-full" onContextMenu={(e) => e.preventDefault()} />
-        <TopBar {...hud} />
-        <PlayerStatus players={hud.players} />
-        <WinnerBanner
-          winner={hud.winner}
-          localPlayer={hud.localPlayer}
-          localDefeated={hud.localDefeated}
-          players={hud.players}
-          stats={hud.stats}
-          durationSec={hud.durationSec}
-          onRestart={onRestart}
-          onMenu={onMenu}
-        />
       </div>
-      <div className="flex flex-col border-t border-zinc-800 bg-zinc-950">
-        <QuickSelectBar groups={hud.quickGroups} onSelectType={selectAllOfType} />
-        <div className="flex h-40 items-stretch">
-          <div className="p-2">
-            <canvas
-              ref={miniRef}
-              className="h-36 w-36 rounded border border-zinc-800 bg-black"
-              onMouseDown={(e) => { miniDragRef.current = true; miniGoto(e); }}
-              onMouseMove={(e) => { if (miniDragRef.current) miniGoto(e); }}
-              onMouseUp={() => (miniDragRef.current = false)}
-              onMouseLeave={() => (miniDragRef.current = false)}
-            />
-          </div>
-          <SelectionPanel title={hud.title} sub={hud.sub} hint={hud.hint} />
+
+      <TopBar {...hud} />
+      <PlayerStatus players={hud.players} />
+
+      {/* far-left: selected unit / building info */}
+      <div className="absolute bottom-3 left-3 z-10">
+        <SelectionPanel title={hud.title} sub={hud.sub} hint={hud.hint} />
+      </div>
+
+      {/* center: quick-select + action card (wrapper passes clicks through its gaps) */}
+      <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-2">
+        <div className="pointer-events-auto">
+          <QuickSelectBar groups={hud.quickGroups} onSelectType={selectAllOfType} />
+        </div>
+        <div className="pointer-events-auto">
           <CommandCard actions={hud.actions} onAction={onAction} />
         </div>
       </div>
+
+      {/* far-right: minimap */}
+      <div className="absolute bottom-3 right-3 z-10 rounded-xl bg-white/5 p-1.5 shadow-lg ring-1 ring-white/10 backdrop-blur-md">
+        <canvas
+          ref={miniRef}
+          className="h-40 w-40 rounded-lg bg-black/40"
+          onMouseDown={(e) => { miniDragRef.current = true; miniGoto(e); }}
+          onMouseMove={(e) => { if (miniDragRef.current) miniGoto(e); }}
+          onMouseUp={() => (miniDragRef.current = false)}
+          onMouseLeave={() => (miniDragRef.current = false)}
+        />
+      </div>
+
+      <WinnerBanner
+        winner={hud.winner}
+        localPlayer={hud.localPlayer}
+        localDefeated={hud.localDefeated}
+        players={hud.players}
+        stats={hud.stats}
+        durationSec={hud.durationSec}
+        onRestart={onRestart}
+        onMenu={onMenu}
+      />
     </div>
   );
 }

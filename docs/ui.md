@@ -40,14 +40,15 @@ Style: keep it clean/modern (flat panels, good contrast, readable type) but func
 | Select all of type | Click its chip in the **quick-select bar** |
 | Add to selection | Shift + click |
 | Move | Right click on floor |
-| Attack-move | `A` then click |
-| Stop | `S` |
+| Attack-move | `E` then click |
+| Stop | `Q` |
+| Build (worker) | number `1`–`6` (Base / Generator / Barracks / Tech Lab / Forge / Turret) |
 | Cycle stance (combat) | `Y` (Aggressive → Stand Ground → Hold Fire) |
 | Area mine (workers) | `M` then drag a box over rock |
-| Create control group | Ctrl + number `1–9` |
-| Recall control group | number `1–9` |
-| Set rally point | **Set Rally** button (Nexus/Gateway) then click, or right-click with the building selected |
-| Camera pan | Edge scroll / WASD / arrow keys |
+| Create control group | Ctrl/Shift + number `1–9` |
+| Recall control group | number `1–9` (when no build is bound to that number) |
+| Set rally point | **Set Rally** button (Base/Barracks) then click, or right-click with the building selected |
+| Camera pan | `WASD` / arrow keys / middle-click drag / minimap |
 | Jump to base | (hotkey, e.g. backspace cycles bases) |
 | Production hotkeys | letter shown on each command-card button |
 
@@ -86,4 +87,5 @@ Style: keep it clean/modern (flat panels, good contrast, readable type) but func
   - **End-game stats** — `WinnerBanner` now renders a per-player stats table + match duration from `GameState.stats` / `endedTick`.
   - **Action cursors** — `computeCursor()` sets the canvas CSS cursor from the cursor pack per mode/hover (pickaxe/hammer/target/boot/…).
 - **2026-05-30 (art overhaul)** — Swapped the hand-drawn vector icons for the Kenney CC0 packs via a new browser-only `game/render/sprites.ts` (lazy image cache + `ready()` fallback to the old vectors): workers = space-shooter ships, Zealot/Stalker = top-down tanks (turretless / barreled, per-player color variant), buildings = sci-fi-RTS structures, plus a per-unit **flashlight vision cone** (light-mask, rotated to `facing`), an **animated "working" badge** over busy units, and explosion sprites on hits. See [fog-of-war.md](./fog-of-war.md), [units.md](./units.md).
-- **2026-05-30 (controls + naming)** — **Middle-click drag** pans the camera (`midPanRef`, grab-drag). Dropped the **boot/move cursor** (plain floor uses the default cursor; pickaxe/hammer/target kept). Selection panel shows a clearer **active state** (Idle / Moving / Mining / Gathering / Building / Returning cargo / Attacking). Unit/building **display names** changed (Worker/Zealot/Stalker → Miner/Brawler/Gunner; Nexus/Pylon/Gateway/Cybernetics/Cannon → Base/Generator/Barracks/Tech Lab/Turret). **Demolish/Cancel** + **resume/assist build** added to the building/worker command flows (see [buildings.md](./buildings.md)). **Removed the flashlight** ([fog-of-war.md](./fog-of-war.md)). _Still queued: glass/floating HUD relayout (info-left · actions-center · map-right) + separating worker build vs. command actions._
+- **2026-05-30 (controls + naming)** — **Middle-click drag** pans the camera (`midPanRef`, grab-drag). Dropped the **boot/move cursor** (plain floor uses the default cursor; pickaxe/hammer/target kept). Selection panel shows a clearer **active state** (Idle / Moving / Mining / Gathering / Building / Returning cargo / Attacking). Unit/building **display names** changed (Worker/Zealot/Stalker → Miner/Brawler/Gunner; Nexus/Pylon/Gateway/Cybernetics/Cannon → Base/Generator/Barracks/Tech Lab/Turret). **Demolish/Cancel** + **resume/assist build** added to the building/worker command flows (see [buildings.md](./buildings.md)). **Removed the flashlight** ([fog-of-war.md](./fog-of-war.md)).
+- **2026-05-30 (WASD + keybind overhaul + glass HUD)** — **Full WASD pan** (held, like the arrows). Build hotkeys moved to **numbers `1`–`6`** (a numbered build action takes priority over control-group recall while a worker is selected — known tradeoff: you can't recall groups 1–6 with a worker selected). Remapped the clashing commands off WASD: **attack-move `A`→`E`**, **stop `S`→`Q`**, **train Gunner / research Armor `W`→`E`**. **HUD is now floating glass** over a full-screen battlefield: KPIs top-left, **selected info bottom-left**, **action card bottom-center** (with the worker **Build** menu split from its other **Commands** via `HudAction.group`), **minimap bottom-right**; canvas input is gated by `e.target === canvas` so clicks on panels don't fall through. `QuickSelectBar`/`TopBar`/`SelectionPanel`/`CommandCard` share a glass style.
