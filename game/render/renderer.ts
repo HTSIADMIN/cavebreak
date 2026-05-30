@@ -1,8 +1,8 @@
-import { BUILDING_STATS, POWER_RADIUS, UNIT_STATS } from "../sim/constants";
+import { BUILDING_STATS, POWER_RADIUS } from "../sim/constants";
 import { idx } from "../sim/grid";
 import { BuildingType, GameState, TileType, Unit, UnitType } from "../sim/types";
 import { Camera } from "./camera";
-import { buildingImage, drawCone, drawFit, drawRotated, explosionFrame, ready, unitImage } from "./sprites";
+import { buildingImage, drawFit, drawRotated, explosionFrame, ready, unitImage } from "./sprites";
 
 export interface RenderEffect {
   kind: "wallBreak" | "hit";
@@ -95,8 +95,11 @@ export function renderGame(
         ctx.fillStyle = "rgba(120,170,255,0.14)";
         ctx.fillRect(sx, sy, scale + 1, scale + 1);
       }
-      // Explored-but-not-current (vis 1) dimming is applied AFTER the flashlight pass below
-      // (the fog-overlay pass), so cone light can't leak onto / "reveal" fogged terrain.
+      if (vis === 1) {
+        // Explored but not currently seen → dark memory.
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.fillRect(sx, sy, scale + 1, scale + 1);
+      }
     }
   }
 
@@ -130,30 +133,6 @@ export function renderGame(
         if (visibility[i] === 0 || grid.tiles[i] !== TileType.ROCK) continue;
         ctx.fillRect(cam.worldToScreenX(tx), cam.worldToScreenY(ty), scale + 1, scale + 1);
       }
-    }
-  }
-
-  // Flashlight vision cones for the local player's units — a SUBTLE fog-of-war "flashlight"
-  // glow in front of each unit, drawn additively over the ground (entities paint on top, and
-  // the fog-overlay pass right below clips it to currently-seen tiles).
-  for (const u of state.units) {
-    if (u.owner !== local) continue;
-    const cx = cam.worldToScreenX(u.x);
-    const cy = cam.worldToScreenY(u.y);
-    const pad = scale * 9;
-    if (cx < -pad || cy < -pad || cx > w + pad || cy > h + pad) continue;
-    drawCone(ctx, cx, cy, UNIT_STATS[u.type].sight * scale, u.facing, 0.07);
-  }
-
-  // Fog overlay — re-assert fog ON TOP of the flashlight so only currently-seen (vis 2) tiles
-  // stay lit. Unexplored stays black; explored-but-not-current goes dim. This is what keeps the
-  // fog honest: a unit/building reveals its current surroundings, everything else is dark.
-  for (let ty = y0; ty <= y1; ty++) {
-    for (let tx = x0; tx <= x1; tx++) {
-      const v = visibility[idx(grid, tx, ty)];
-      if (v === 2) continue;
-      ctx.fillStyle = v === 0 ? "#050507" : "rgba(0,0,0,0.5)";
-      ctx.fillRect(cam.worldToScreenX(tx), cam.worldToScreenY(ty), scale + 1, scale + 1);
     }
   }
 

@@ -146,7 +146,6 @@ export function preloadSprites(seats = 4): void {
     unitImage("zealot", o);
     unitImage("stalker", o);
   }
-  coneImage();
   for (let i = 1; i <= 5; i++) explosionFrame(i);
 }
 

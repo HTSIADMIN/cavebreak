@@ -211,6 +211,8 @@ export type Command =
   | { type: "stop"; unitIds: number[] }
   | { type: "setStance"; unitIds: number[]; stance: Stance }
   | { type: "build"; unitIds: number[]; buildingType: BuildingType; tx: number; ty: number }
+  | { type: "assistBuild"; unitIds: number[]; buildingId: number }
+  | { type: "demolish"; buildingId: number }
   | { type: "train"; buildingId: number; unitType: UnitType }
   | { type: "research"; buildingId: number; kind: UpgradeKind }
   | { type: "setRally"; buildingId: number; tx: number; ty: number };
