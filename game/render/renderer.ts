@@ -1,7 +1,8 @@
-import { BUILDING_STATS, POWER_RADIUS } from "../sim/constants";
+import { BUILDING_STATS, POWER_RADIUS, UNIT_STATS } from "../sim/constants";
 import { idx } from "../sim/grid";
-import { BuildingType, GameState, TileType, UnitType } from "../sim/types";
+import { BuildingType, GameState, TileType, Unit, UnitType } from "../sim/types";
 import { Camera } from "./camera";
+import { buildingImage, drawCone, drawFit, drawRotated, explosionFrame, ready, unitImage } from "./sprites";
 
 export interface RenderEffect {
   kind: "wallBreak" | "hit";
@@ -20,6 +21,9 @@ export interface RenderView {
   placement: { type: BuildingType; tx: number; ty: number; valid: boolean } | null;
   markers: { x: number; y: number; kind: "move" | "attack"; t: number }[];
   effects: RenderEffect[];
+  // Tile-space rectangle being dragged in area-mine mode (highlights enclosed rock).
+  mineArea: { x0: number; y0: number; x1: number; y1: number } | null;
+  time: number; // ms clock for looping task animations
 }
 
 const TILE_COLORS: Record<number, string> = {
@@ -114,6 +118,34 @@ export function renderGame(
   }
   ctx.stroke();
 
+  // Area-mine selection: tint the mineable rock inside the dragged rectangle.
+  if (view.mineArea) {
+    const a = view.mineArea;
+    const mx0 = Math.max(x0, Math.min(a.x0, a.x1));
+    const mx1 = Math.min(x1, Math.max(a.x0, a.x1));
+    const my0 = Math.max(y0, Math.min(a.y0, a.y1));
+    const my1 = Math.min(y1, Math.max(a.y0, a.y1));
+    ctx.fillStyle = "rgba(255,210,90,0.32)";
+    for (let ty = my0; ty <= my1; ty++) {
+      for (let tx = mx0; tx <= mx1; tx++) {
+        const i = idx(grid, tx, ty);
+        if (visibility[i] === 0 || grid.tiles[i] !== TileType.ROCK) continue;
+        ctx.fillRect(cam.worldToScreenX(tx), cam.worldToScreenY(ty), scale + 1, scale + 1);
+      }
+    }
+  }
+
+  // Flashlight vision cones for the local player's units — a fog-of-war "flashlight" look,
+  // drawn additively over the ground (entities are painted on top afterwards).
+  for (const u of state.units) {
+    if (u.owner !== local) continue;
+    const cx = cam.worldToScreenX(u.x);
+    const cy = cam.worldToScreenY(u.y);
+    const pad = scale * 9;
+    if (cx < -pad || cy < -pad || cx > w + pad || cy > h + pad) continue;
+    drawCone(ctx, cx, cy, UNIT_STATS[u.type].sight * scale * 1.2, u.facing, 0.16);
+  }
+
   // Power-radius preview: hovered pylon (+ link to nearest Nexus) or pylon placement ghost.
   const drawPowerCircle = (wx: number, wy: number) => {
     ctx.fillStyle = "rgba(120,170,255,0.08)";
@@ -163,11 +195,17 @@ export function renderGame(
     const sy = cam.worldToScreenY(b.ty);
     const bw = b.w * scale;
     const bh = b.h * scale;
-    ctx.globalAlpha = b.built ? 1 : 0.45;
+    ctx.globalAlpha = b.built ? 1 : 0.5;
+    // Team-color base plate (ownership reads through the neutral structure art) + dark inlay.
     ctx.fillStyle = state.players[b.owner].color;
-    ctx.fillRect(sx + 2, sy + 2, bw - 4, bh - 4);
+    ctx.fillRect(sx + 1.5, sy + 1.5, bw - 3, bh - 3);
+    ctx.fillStyle = "rgba(10,12,18,0.5)";
+    ctx.fillRect(sx + 3.5, sy + 3.5, bw - 7, bh - 7);
+    const bimg = buildingImage(b.type);
+    if (!drawFit(ctx, bimg, sx + bw / 2, sy + bh / 2, bw - 6, bh - 6)) {
+      drawBuildingIcon(ctx, b.type, sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.7);
+    }
     ctx.globalAlpha = 1;
-    drawBuildingIcon(ctx, b.type, sx + bw / 2, sy + bh / 2, Math.min(bw, bh) * 0.7);
     if (view.hovered === b.id) {
       ctx.strokeStyle = "rgba(255,255,255,0.6)";
       ctx.lineWidth = 1.5;
@@ -211,12 +249,14 @@ export function renderGame(
     ctx.stroke();
   }
 
-  // Units (distinct icon per type).
+  // Units (sprite per type, rotated to facing; vector icon fallback while art loads).
   for (const u of state.units) {
     if (u.owner !== local && !tileVisible(Math.floor(u.x), Math.floor(u.y))) continue;
+    const isWorker = u.type === "worker";
     const cx = cam.worldToScreenX(u.x);
     const cy = cam.worldToScreenY(u.y);
-    const r = scale * (u.type === "worker" ? 0.26 : 0.33);
+    const r = scale * (isWorker ? 0.3 : 0.36);
+    const spriteSize = scale * (isWorker ? 0.78 : 1.0);
     if (view.selected.has(u.id)) {
       ctx.strokeStyle = "#7CFC7C";
       ctx.lineWidth = 2;
@@ -224,17 +264,41 @@ export function renderGame(
       ctx.arc(cx, cy, r + 3, 0, Math.PI * 2);
       ctx.stroke();
     }
-    drawUnitIcon(ctx, u.type, cx, cy, r, state.players[u.owner].color);
+    // A small bob conveys effort while a unit is hands-on with a task.
+    const working = u.state === "mining_wall" || u.state === "constructing" || u.state === "harvesting";
+    const bob = working ? Math.sin(view.time / 110 + u.id) * scale * 0.05 : 0;
+    if (!drawRotated(ctx, unitImage(u.type, u.owner), cx, cy + bob, spriteSize, u.facing)) {
+      drawUnitIcon(ctx, u.type, cx, cy, r, state.players[u.owner].color);
+    }
     if (u.carrying) {
       ctx.fillStyle = u.carrying.kind === "gas" ? "#6ad27a" : "#4fd0e0";
       ctx.beginPath();
-      ctx.arc(cx, cy - r - 2, r * 0.4, 0, Math.PI * 2);
+      ctx.arc(cx + r * 0.7, cy - r - 2, r * 0.42, 0, Math.PI * 2);
       ctx.fill();
     }
+    drawTaskIndicator(ctx, u, cx, cy, r, view.time);
     if (u.hp < u.maxHp || u.shields < u.maxShields) {
-      drawBar(ctx, cx - r, cy - r - 6, r * 2, u.hp / u.maxHp, "#5ad15a");
-      if (u.maxShields > 0) drawBar(ctx, cx - r, cy - r - 10, r * 2, u.shields / u.maxShields, "#6bc5ff");
+      drawBar(ctx, cx - r, cy - r - 7, r * 2, u.hp / u.maxHp, "#5ad15a");
+      if (u.maxShields > 0) drawBar(ctx, cx - r, cy - r - 11, r * 2, u.shields / u.maxShields, "#6bc5ff");
     }
+  }
+
+  // Rally points: flag + link line for selected friendly production buildings.
+  for (const b of state.buildings) {
+    if (!view.selected.has(b.id) || b.owner !== local || !b.rally) continue;
+    const bx = cam.worldToScreenX(b.tx + b.w / 2);
+    const by = cam.worldToScreenY(b.ty + b.h / 2);
+    const rx = cam.worldToScreenX(b.rally.x + 0.5);
+    const ry = cam.worldToScreenY(b.rally.y + 0.5);
+    ctx.strokeStyle = "rgba(124,252,124,0.7)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(rx, ry);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    drawFlag(ctx, rx, ry, scale);
   }
 
   // Transient effects: wall breaks + attack impacts (fog-gated).
@@ -268,10 +332,15 @@ export function renderGame(
       ctx.moveTo(x, y);
       ctx.lineTo(ex, ey);
       ctx.stroke();
-      ctx.fillStyle = "#fff3c0";
-      ctx.beginPath();
-      ctx.arc(ex, ey, 3 + (1 - e.t) * 4, 0, Math.PI * 2);
-      ctx.fill();
+      const frame = explosionFrame(1 + Math.floor((1 - e.t) * 5));
+      if (ready(frame)) {
+        drawFit(ctx, frame, ex, ey, scale * 0.9, scale * 0.9);
+      } else {
+        ctx.fillStyle = "#fff3c0";
+        ctx.beginPath();
+        ctx.arc(ex, ey, 3 + (1 - e.t) * 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -403,6 +472,47 @@ function drawBar(ctx: CanvasRenderingContext2D, x: number, y: number, width: num
   ctx.fillRect(x, y, width, 3);
   ctx.fillStyle = color;
   ctx.fillRect(x, y, width * f, 3);
+}
+
+// Animated "working" badge: three dots cycling above a unit that's hands-on with a task, so
+// it's obvious it's mining / gathering / building / fighting rather than just standing there.
+const TASK_COLOR: Partial<Record<Unit["state"], string>> = {
+  mining_wall: "#ffd24a",
+  constructing: "#ffb24a",
+  harvesting: "#4fd0e0",
+  returning_resource: "#4fd0e0",
+  attacking: "#ff6a5a",
+};
+function drawTaskIndicator(ctx: CanvasRenderingContext2D, u: Unit, cx: number, cy: number, r: number, time: number) {
+  const color = TASK_COLOR[u.state];
+  if (!color) return;
+  const active = Math.floor(time / 200) % 3;
+  const dot = Math.max(1.3, r * 0.18);
+  for (let i = 0; i < 3; i++) {
+    ctx.globalAlpha = i === active ? 1 : 0.3;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(cx + (i - 1) * dot * 2.4, cy - r - 7, dot, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawFlag(ctx: CanvasRenderingContext2D, x: number, y: number, scale: number) {
+  const h = Math.max(10, scale * 0.5);
+  ctx.strokeStyle = "rgba(255,255,255,0.85)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x, y - h);
+  ctx.stroke();
+  ctx.fillStyle = "#7CFC7C";
+  ctx.beginPath();
+  ctx.moveTo(x, y - h);
+  ctx.lineTo(x + h * 0.6, y - h * 0.78);
+  ctx.lineTo(x, y - h * 0.56);
+  ctx.closePath();
+  ctx.fill();
 }
 
 export function renderMinimap(

@@ -7,8 +7,8 @@ import { GameState, Grid, PlayerId } from "./types";
 // Line-of-sight: true if nothing strictly between source and target tile blocks vision.
 // The target tile itself may be a blocker (you see the wall face). (docs/fog-of-war.md)
 function losClear(grid: Grid, x0: number, y0: number, x1: number, y1: number): boolean {
-  let dx = Math.abs(x1 - x0);
-  let dy = Math.abs(y1 - y0);
+  const dx = Math.abs(x1 - x0);
+  const dy = Math.abs(y1 - y0);
   const sx = x0 < x1 ? 1 : -1;
   const sy = y0 < y1 ? 1 : -1;
   let err = dx - dy;

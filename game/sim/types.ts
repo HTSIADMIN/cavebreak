@@ -51,6 +51,20 @@ export interface MatchSetup {
   seed?: number;
 }
 
+// Cumulative per-player tallies for the end-of-game summary (docs/ui.md). One entry per
+// player id, parallel to GameState.players.
+export interface PlayerStats {
+  unitsProduced: number;
+  unitsLost: number;
+  unitsKilled: number; // enemy units this player destroyed
+  buildingsConstructed: number;
+  buildingsLost: number;
+  buildingsDestroyed: number; // enemy buildings this player destroyed
+  mineralsGathered: number;
+  gasGathered: number;
+  peakSupply: number;
+}
+
 export type ResourceKind = "mineral" | "gas";
 
 export interface Deposit {
@@ -76,6 +90,13 @@ export type Attribute = "light" | "armored" | "biological" | "mechanical";
 
 export type UnitType = "worker" | "zealot" | "stalker";
 
+// Combat stance — controls AUTO target acquisition only (explicit attack orders always
+// apply). Mirrors SC2 (docs/combat.md):
+//   aggressive  — acquire enemies anywhere in sight and chase them (default).
+//   standGround — hold position; auto-attack only enemies already in weapon range, never chase.
+//   holdFire    — never auto-attack; engage only when explicitly ordered.
+export type Stance = "aggressive" | "standGround" | "holdFire";
+
 export type UnitState =
   | "idle"
   | "moving"
@@ -98,11 +119,14 @@ export interface Unit {
   maxShields: number;
   shieldRegenCd: number; // seconds until shields start regenerating again
   state: UnitState;
+  facing: number; // radians, 0 = +x (east); drives sprite rotation + the vision cone
+  stance: Stance;
 
   path: Vec2[] | null;
   moveGoal: Vec2 | null;
 
   mineTile: Vec2 | null;
+  mineQueue: Vec2[] | null; // remaining rock tiles for an area-mine order; null = single/none
 
   depositId: number | null;
   carrying: { kind: ResourceKind; amount: number } | null;
@@ -111,6 +135,7 @@ export interface Unit {
   buildTargetId: number | null;
 
   targetId: number | null;
+  autoTarget: boolean; // current target was auto-acquired (stance applies) vs explicitly ordered
   attackGoal: Vec2 | null;
   attackCd: number;
   repathCd: number;
@@ -165,6 +190,8 @@ export interface GameState {
   deposits: Deposit[];
   nextId: number;
   winner: PlayerId | null;
+  stats: PlayerStats[]; // parallel to players
+  endedTick: number | null; // tick the match resolved (for match duration)
   // Local player's (player 0) visibility for rendering: 0 hidden, 1 explored, 2 visible.
   visibility: Uint8Array;
   // Transient per-step events for the view to animate; the view drains them each frame.
@@ -179,8 +206,10 @@ export type Command =
   | { type: "attackMove"; unitIds: number[]; tx: number; ty: number }
   | { type: "attack"; unitIds: number[]; targetId: number }
   | { type: "mine"; unitIds: number[]; tx: number; ty: number }
+  | { type: "mineArea"; unitIds: number[]; tiles: Vec2[] }
   | { type: "harvest"; unitIds: number[]; depositId: number }
   | { type: "stop"; unitIds: number[] }
+  | { type: "setStance"; unitIds: number[]; stance: Stance }
   | { type: "build"; unitIds: number[]; buildingType: BuildingType; tx: number; ty: number }
   | { type: "train"; buildingId: number; unitType: UnitType }
   | { type: "research"; buildingId: number; kind: UpgradeKind }

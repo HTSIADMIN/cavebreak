@@ -6,7 +6,7 @@ The unit roster, stats, costs, and counters are **lifted from StarCraft 2** (sin
 
 - The economic backbone. **Cost: 50 minerals, 1 supply** (SC2 value).
 - Built from a **base** (townhall).
-- Capabilities: mine walls (expansion), harvest minerals/gas, construct buildings.
+- Capabilities: mine walls (expansion, incl. area-mining a region), harvest minerals/gas, construct buildings. **While constructing it is fully tied up** (can't gather/fight); several workers on one site build it faster (see [buildings.md](./buildings.md)).
 - State machine: `idle | moving | mining_wall | harvesting | returning_resource | constructing`. (See [mining.md](./mining.md).)
 
 ## Combat Unit Roles (SC2-modeled, single faction MVP)
@@ -64,3 +64,4 @@ Attributes drive combat counters (see [combat.md](./combat.md)). Copy SC2's tagg
   - Unit state machine extended with `attacking` / `attack_moving`. Combat units auto-acquire the nearest enemy within their **sight radius**, move into weapon range, and fire on cooldown.
   - Not yet modelled: shields (folded into HP), attribute counters (Light/Armored bonus damage), air units. These are the natural next additions.
 - **2026-05-28 (update)** — Shields/armor/attributes now modelled (supersedes above): Worker `Light, Mech` (20 hp + 20 shields), Zealot `Light, Bio` (100+50, armor 1), Stalker `Armored, Mech` (80+80, armor 1, +5 vs Armored). The **Stalker now requires a Cybernetics Core**. See [balance-data.md](./balance-data.md).
+- **2026-05-30 (stances, facing, sprites, animation)** — Units gained: `Unit.stance` (combat auto-engage policy — see [combat.md](./combat.md)); `Unit.facing` (radians, updated as the unit moves/attacks/works) which rotates its sprite and aims its vision cone; and `Unit.mineQueue` for area-mining ([mining.md](./mining.md)). Rendering moved to sprites (workers = space-shooter ships, Zealot/Stalker = top-down tanks) with an **animated "working" badge** so it's obvious when a unit is mining/gathering/building vs idle. Sprites + cone defined in `game/render/sprites.ts`; all degrade to the old vector icons until art loads.

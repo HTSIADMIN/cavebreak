@@ -4,6 +4,7 @@ import {
   GAS_PER_TRIP,
   GOLDEN_GAS_PER_TRIP,
   GOLDEN_MINERALS_PER_TRIP,
+  MAX_BUILDERS,
   MINERALS_PER_TRIP,
   MINERAL_GATHER_TIME_S,
   SHIELD_REGEN_DELAY,
@@ -184,6 +185,7 @@ function dealDamage(
   let armor = entityArmor(target);
   if (!isBuildingEntity(target)) armor += s.players[target.owner].upgrades.groundArmor;
   dmg = Math.max(0.5, dmg - armor);
+  const wasAlive = target.hp > 0;
   if (target.shields > 0) {
     const absorbed = Math.min(target.shields, dmg);
     target.shields -= absorbed;
@@ -191,6 +193,14 @@ function dealDamage(
   }
   if (dmg > 0) target.hp -= dmg;
   target.shieldRegenCd = SHIELD_REGEN_DELAY;
+  // Credit the kill the instant this hit drops the target (cleanupDead removes it later).
+  if (wasAlive && target.hp <= 0) {
+    const st = s.stats[attackerOwner];
+    if (st) {
+      if (isBuildingEntity(target)) st.buildingsDestroyed++;
+      else st.unitsKilled++;
+    }
+  }
 }
 
 // --- movement ------------------------------------------------------------
@@ -205,6 +215,7 @@ function stepMove(u: Unit, dt: number): boolean {
     const dx = tx - u.x;
     const dy = ty - u.y;
     const dist = Math.hypot(dx, dy);
+    if (dist > 1e-4) u.facing = Math.atan2(dy, dx); // face travel direction (sprite + cone)
     if (dist <= budget) {
       u.x = tx;
       u.y = ty;
@@ -240,11 +251,37 @@ function becomeIdle(u: Unit) {
   u.path = null;
   u.moveGoal = null;
   u.mineTile = null;
+  u.mineQueue = null;
   u.depositId = null;
   u.gatherProgress = 0;
   u.buildTargetId = null;
   u.targetId = null;
+  u.autoTarget = false;
   u.attackGoal = null;
+  // stance + facing intentionally persist across orders.
+}
+
+function faceToward(u: Unit, x: number, y: number) {
+  const dx = x - u.x;
+  const dy = y - u.y;
+  if (dx !== 0 || dy !== 0) u.facing = Math.atan2(dy, dx);
+}
+
+// For an area-mine order: choose this unit's next rock from its queue — the nearest one that
+// is still ROCK and reachable right now (has an open adjacent floor tile). Returns null when
+// nothing is currently mineable, which peels an area from its edges inward as walls fall.
+function pickNextMineTile(s: GameState, u: Unit): Vec2 | null {
+  if (!u.mineQueue) return null;
+  u.mineQueue = u.mineQueue.filter((q) => getTile(s.grid, q.x, q.y) === TileType.ROCK);
+  let best: Vec2 | null = null;
+  let bd = Infinity;
+  for (const q of u.mineQueue) {
+    if (!freeAdjacentTile(s, q.x, q.y, u)) continue; // not mineable yet (walled in)
+    const d = (q.x + 0.5 - u.x) ** 2 + (q.y + 0.5 - u.y) ** 2;
+    if (d < bd) { bd = d; best = { x: q.x, y: q.y }; }
+  }
+  u.mineTile = best;
+  return best;
 }
 
 function acquireTarget(s: GameState, u: Unit, range: number): number | null {
@@ -270,6 +307,33 @@ function acquireTarget(s: GameState, u: Unit, range: number): number | null {
     }
   }
   return bestBld;
+}
+
+// Auto target acquisition, gated by the unit's stance (docs/combat.md). holdFire never
+// acquires; standGround only locks onto enemies already in weapon range (so it defends in
+// place without chasing); aggressive sweeps its full sight radius.
+function acquireAuto(s: GameState, u: Unit): number | null {
+  const stats = UNIT_STATS[u.type];
+  if (u.stance === "holdFire") return null;
+  if (u.stance === "standGround") {
+    let best: number | null = null;
+    let bestD = Infinity;
+    for (const e of s.units) {
+      if (e.owner === u.owner || e.hp <= 0) continue;
+      if (!inWeaponRange(u, e, stats.range)) continue;
+      const d = Math.hypot(u.x - e.x, u.y - e.y);
+      if (d < bestD) { bestD = d; best = e.id; }
+    }
+    if (best !== null) return best;
+    for (const b of s.buildings) {
+      if (b.owner === u.owner || b.hp <= 0) continue;
+      if (!inWeaponRange(u, b, stats.range)) continue;
+      const d = distPointToBuilding(u.x, u.y, b);
+      if (d < bestD) { bestD = d; best = b.id; }
+    }
+    return best;
+  }
+  return acquireTarget(s, u, stats.sight);
 }
 
 function inWeaponRange(u: Unit, e: Unit | Building, range: number): boolean {
@@ -301,9 +365,10 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
   switch (u.state) {
     case "idle": {
       if (isCombatant) {
-        const t = acquireTarget(s, u, stats.sight);
+        const t = acquireAuto(s, u);
         if (t !== null) {
           u.targetId = t;
+          u.autoTarget = true;
           u.state = "attacking";
         }
       }
@@ -314,9 +379,11 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       return;
     }
     case "attack_moving": {
+      // Attack-move is an explicit aggressive order, so it acquires regardless of stance.
       const t = acquireTarget(s, u, stats.sight);
       if (t !== null) {
         u.targetId = t;
+        u.autoTarget = true;
         u.state = "attacking";
         u.path = null;
         return;
@@ -349,6 +416,7 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
         u.state = u.attackGoal ? "attack_moving" : "idle";
         return;
       }
+      faceToward(u, entityCenter(tgt).x, entityCenter(tgt).y);
       if (inWeaponRange(u, tgt, stats.range)) {
         u.path = null;
         if (u.attackCd <= 0 && stats.damage > 0) {
@@ -358,6 +426,13 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
           pushEvent(s, { kind: "hit", x: u.x, y: u.y, ex: tc.x, ey: tc.y });
         }
       } else {
+        // Stand Ground: defend in place — never chase an auto-acquired target out of range.
+        if (u.stance === "standGround" && u.autoTarget) {
+          u.targetId = null;
+          u.path = null;
+          u.state = u.attackGoal ? "attack_moving" : "idle";
+          return;
+        }
         const c = entityCenter(tgt);
         const goalTile = isBuildingEntity(tgt)
           ? approachTileForBuilding(s, tgt, u)
@@ -377,14 +452,24 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       return;
     }
     case "mining_wall": {
-      const t = u.mineTile;
+      let t = u.mineTile;
       if (!t || getTile(s.grid, t.x, t.y) !== TileType.ROCK) {
-        becomeIdle(u);
-        return;
+        // Current target gone (cleared/invalid) — pull the next from an area-mine queue.
+        t = pickNextMineTile(s, u);
+        if (!t) return becomeIdle(u);
       }
+      faceToward(u, t.x + 0.5, t.y + 0.5);
       const adj = isAdjacentToTile(u.x, u.y, t.x, t.y);
-      const res = approach(s, u, adj, freeAdjacentTile(s,t.x, t.y, u), dt);
-      if (res === "blocked") return becomeIdle(u);
+      const res = approach(s, u, adj, freeAdjacentTile(s, t.x, t.y, u), dt);
+      if (res === "blocked") {
+        // Can't path to this rock. For an area order, drop it and try the next; else idle.
+        if (u.mineQueue) {
+          u.mineQueue = u.mineQueue.filter((q) => !(q.x === t!.x && q.y === t!.y));
+          u.mineTile = null;
+          return;
+        }
+        return becomeIdle(u);
+      }
       if (res !== "arrived") return;
       // Cooperative: every adjacent miner adds its rate to the shared tile progress.
       const key = t.y * s.grid.width + t.x;
@@ -393,8 +478,10 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
         s.wallProgress.delete(key);
         setTile(s.grid, t.x, t.y, TileType.FLOOR);
         s.players[u.owner].minerals += WALL_CLEAR_MINERAL_BONUS;
+        if (s.stats[u.owner]) s.stats[u.owner].mineralsGathered += WALL_CLEAR_MINERAL_BONUS;
         pushEvent(s, { kind: "wallBreak", x: t.x + 0.5, y: t.y + 0.5 });
-        becomeIdle(u);
+        u.mineTile = null;
+        if (!pickNextMineTile(s, u)) becomeIdle(u); // area order? continue, else done
       } else {
         s.wallProgress.set(key, prog);
       }
@@ -408,6 +495,7 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
         u.depositId = dep.id;
         u.path = null;
       }
+      faceToward(u, dep.tx + 0.5, dep.ty + 0.5);
       const adj = isAdjacentToTile(u.x, u.y, dep.tx, dep.ty);
       const res = approach(s, u, adj, freeAdjacentTile(s,dep.tx, dep.ty, u), dt);
       if (res === "blocked") return becomeIdle(u);
@@ -441,8 +529,14 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
       if (res !== "arrived") return;
       if (u.carrying) {
         const p = s.players[u.owner];
-        if (u.carrying.kind === "gas") p.gas += u.carrying.amount;
-        else p.minerals += u.carrying.amount;
+        const st = s.stats[u.owner];
+        if (u.carrying.kind === "gas") {
+          p.gas += u.carrying.amount;
+          if (st) st.gasGathered += u.carrying.amount;
+        } else {
+          p.minerals += u.carrying.amount;
+          if (st) st.mineralsGathered += u.carrying.amount;
+        }
         u.carrying = null;
       }
       u.path = null;
@@ -452,24 +546,31 @@ function updateUnit(s: GameState, u: Unit, dt: number) {
     case "constructing": {
       const b = u.buildTargetId !== null ? getBuilding(s, u.buildTargetId) : undefined;
       if (!b || b.built) {
+        // Building gone or already finished — release this worker (completion frees builders
+        // in updateConstruction; this also covers a build that was destroyed mid-construction).
         u.buildTargetId = null;
-        u.state = "harvesting";
-        u.depositId = null;
+        becomeIdle(u);
         return;
       }
       const adj = isAdjacentToBuilding(u.x, u.y, b);
       const res = approach(s, u, adj, approachTileForBuilding(s, b, u), dt);
       if (res === "blocked") {
-        refundBuilding(s, b);
+        // This builder can't reach the site. If it's the last builder and nothing's been
+        // done yet, refund the misplaced structure; otherwise just free this one worker.
+        const others = s.units.some(
+          (o) => o !== u && o.buildTargetId === b.id && o.state === "constructing"
+        );
+        if (!others && !b.started && b.buildProgress === 0) refundBuilding(s, b);
         u.buildTargetId = null;
         becomeIdle(u);
         return;
       }
       if (res !== "arrived") return;
-      b.started = true;
-      u.buildTargetId = null;
-      u.state = "harvesting";
-      u.depositId = null;
+      // Arrived — lock on. The worker is now TIED UP here (can't gather/fight) and contributes
+      // build progress every tick; updateConstruction sums all adjacent builders and releases
+      // them when the structure completes. It stays put until then (or a new order pulls it).
+      u.path = null;
+      faceToward(u, b.tx + b.w / 2, b.ty + b.h / 2);
       return;
     }
   }
@@ -508,16 +609,52 @@ function updateShields(s: GameState, dt: number) {
 
 function updateConstruction(s: GameState, dt: number) {
   for (const b of s.buildings) {
-    if (b.built || !b.started) continue;
+    if (b.built) continue;
     const st = BUILDING_STATS[b.type];
-    b.buildProgress += dt;
+    // Tied-up, cooperative construction: progress only advances while workers are on site,
+    // and each adjacent builder adds its own `dt` (so N builders ≈ N× speed, capped).
+    let builders = 0;
+    for (const u of s.units) {
+      if (u.buildTargetId === b.id && u.state === "constructing" && isAdjacentToBuilding(u.x, u.y, b)) {
+        builders++;
+      }
+    }
+    if (builders === 0) continue; // no progress with nobody building it
+    b.started = true;
+    b.buildProgress += dt * Math.min(builders, MAX_BUILDERS);
     b.hp = Math.max(1, Math.round((b.buildProgress / st.buildTime) * b.maxHp));
     if (b.buildProgress >= st.buildTime) {
       b.built = true;
       b.hp = b.maxHp;
       b.shields = b.maxShields;
+      if (s.stats[b.owner]) s.stats[b.owner].buildingsConstructed++;
+      // Release every builder back to gathering.
+      for (const u of s.units) {
+        if (u.buildTargetId === b.id && u.state === "constructing") {
+          u.buildTargetId = null;
+          u.state = "harvesting"; // resume economy (auto-picks the nearest patch)
+          u.depositId = null;
+          u.path = null;
+        }
+      }
     }
   }
+}
+
+// A deposit (with ore left) sitting on or 8-adjacent to a tile — used to auto-harvest when a
+// rally point is dropped on/next to a resource.
+function depositNearTile(s: GameState, tile: Vec2): Deposit | null {
+  let best: Deposit | null = null;
+  let bd = Infinity;
+  for (const d of s.deposits) {
+    if (d.remaining <= 0) continue;
+    const dx = d.tx - tile.x;
+    const dy = d.ty - tile.y;
+    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) continue;
+    const dist = dx * dx + dy * dy;
+    if (dist < bd) { bd = dist; best = d; }
+  }
+  return best;
 }
 
 function spawnUnit(s: GameState, b: Building, type: UnitType) {
@@ -536,29 +673,43 @@ function spawnUnit(s: GameState, b: Building, type: UnitType) {
     maxShields: st.shields,
     shieldRegenCd: 0,
     state: "idle",
+    facing: Math.atan2(tile.y + 0.5 - from.y, tile.x + 0.5 - from.x), // face out of the building
+    stance: "aggressive",
     path: null,
     moveGoal: null,
     mineTile: null,
+    mineQueue: null,
     depositId: null,
     carrying: null,
     gatherProgress: 0,
     buildTargetId: null,
     targetId: null,
+    autoTarget: false,
     attackGoal: null,
     attackCd: 0,
     repathCd: 0,
   };
   s.units.push(u);
-  if (type === "worker") {
-    u.state = "harvesting";
-  } else if (b.rally) {
+  if (s.stats[b.owner]) s.stats[b.owner].unitsProduced++;
+
+  // Rally: send the new unit to the set spawn point. A rally on/next to a mineral or geyser
+  // puts workers straight onto it (auto-harvest); otherwise the unit just walks there.
+  if (b.rally) {
+    const dep = type === "worker" ? depositNearTile(s, b.rally) : null;
+    if (dep) {
+      u.state = "harvesting";
+      u.depositId = dep.id;
+      return;
+    }
     const p = findPath(s.grid, s.buildings, u, b.rally);
     if (p) {
       u.path = p;
       u.moveGoal = { ...b.rally };
       u.state = "moving";
+      return;
     }
   }
+  if (type === "worker") u.state = "harvesting"; // no rally → auto-gather the nearest patch
 }
 
 function updateProduction(s: GameState, dt: number) {
@@ -615,6 +766,8 @@ function updateBuildingCombat(s: GameState, dt: number) {
 }
 
 function cleanupDead(s: GameState) {
+  for (const u of s.units) if (u.hp <= 0 && s.stats[u.owner]) s.stats[u.owner].unitsLost++;
+  for (const b of s.buildings) if (b.hp <= 0 && s.stats[b.owner]) s.stats[b.owner].buildingsLost++;
   s.units = s.units.filter((u) => u.hp > 0);
   s.buildings = s.buildings.filter((b) => b.hp > 0);
 }
@@ -634,6 +787,8 @@ function recomputeSupply(s: GameState) {
     }
     p.supplyUsed = used;
     p.supplyMax = Math.min(SUPPLY_CAP, max);
+    const st = s.stats[p.id];
+    if (st && used > st.peakSupply) st.peakSupply = used;
   }
 }
 
@@ -643,7 +798,10 @@ function checkWinCondition(s: GameState) {
     if (!s.buildings.some((b) => b.owner === p.id)) p.defeated = true;
   }
   const alive = s.players.filter((p) => !p.defeated);
-  if (alive.length === 1 && s.winner === null) s.winner = alive[0].id;
+  if (alive.length === 1 && s.winner === null) {
+    s.winner = alive[0].id;
+    if (s.endedTick === null) s.endedTick = s.tick;
+  }
 }
 
 // --- placement & commands ------------------------------------------------
@@ -671,11 +829,11 @@ export function canPlaceBuilding(s: GameState, owner: PlayerId, type: BuildingTy
   return true;
 }
 
-function placeBuilding(s: GameState, owner: PlayerId, type: BuildingType, tx: number, ty: number, worker: Unit | null): boolean {
+function placeBuilding(s: GameState, owner: PlayerId, type: BuildingType, tx: number, ty: number, worker: Unit | null): Building | null {
   const st = BUILDING_STATS[type];
   const p = s.players[owner];
-  if (p.minerals < st.minerals || p.gas < st.gas) return false;
-  if (!canPlaceBuilding(s, owner, type, tx, ty)) return false;
+  if (p.minerals < st.minerals || p.gas < st.gas) return null;
+  if (!canPlaceBuilding(s, owner, type, tx, ty)) return null;
   p.minerals -= st.minerals;
   p.gas -= st.gas;
   const b: Building = {
@@ -703,14 +861,20 @@ function placeBuilding(s: GameState, owner: PlayerId, type: BuildingType, tx: nu
     attackCd: 0,
   };
   s.buildings.push(b);
-  if (worker) {
-    worker.state = "constructing";
-    worker.buildTargetId = b.id;
-    worker.path = null;
-    worker.depositId = null;
-    worker.carrying = null;
-  }
-  return true;
+  if (worker) assignBuilder(worker, b);
+  return b;
+}
+
+// Tie a worker to a build site: it heads there and stays building until done.
+function assignBuilder(worker: Unit, b: Building) {
+  worker.state = "constructing";
+  worker.buildTargetId = b.id;
+  worker.path = null;
+  worker.mineTile = null;
+  worker.mineQueue = null;
+  worker.depositId = null;
+  worker.carrying = null;
+  worker.targetId = null;
 }
 
 function enqueueTrain(s: GameState, b: Building, type: UnitType): boolean {
@@ -754,11 +918,13 @@ export function applyCommand(s: GameState, cmd: Command): void {
         const u = getUnit(s, id);
         if (!u) continue;
         u.mineTile = null;
+        u.mineQueue = null;
         u.depositId = null;
         u.carrying = null;
         u.gatherProgress = 0;
         u.buildTargetId = null;
         u.targetId = null;
+        u.autoTarget = false;
         if (cmd.type === "attackMove" && u.type !== "worker") {
           u.attackGoal = goal;
           u.path = goal ? findPath(s.grid, s.buildings, u, goal) : null;
@@ -779,9 +945,12 @@ export function applyCommand(s: GameState, cmd: Command): void {
         const u = getUnit(s, id);
         if (!u || UNIT_STATS[u.type].damage <= 0) continue;
         u.targetId = cmd.targetId;
+        u.autoTarget = false; // explicit order — always chase, regardless of stance
         u.attackGoal = null;
         u.mineTile = null;
+        u.mineQueue = null;
         u.depositId = null;
+        u.buildTargetId = null;
         u.path = null;
         u.state = "attacking";
       }
@@ -794,10 +963,38 @@ export function applyCommand(s: GameState, cmd: Command): void {
         if (!u) continue; // any unit can mine walls (combat units faster)
         u.state = "mining_wall";
         u.mineTile = { x: cmd.tx, y: cmd.ty };
+        u.mineQueue = null; // single-tile order
         u.depositId = null;
         u.carrying = null;
         u.targetId = null;
+        u.buildTargetId = null;
         u.path = null;
+      }
+      return;
+    }
+    case "mineArea": {
+      // Queue an entire selected region of rock to every chosen worker; each picks the
+      // nearest reachable wall and the shared cooperative-mining progress does the rest.
+      const tiles = cmd.tiles.filter((t) => getTile(s.grid, t.x, t.y) === TileType.ROCK);
+      if (tiles.length === 0) return;
+      for (const id of cmd.unitIds) {
+        const u = getUnit(s, id);
+        if (!u) continue;
+        u.state = "mining_wall";
+        u.mineQueue = tiles.map((t) => ({ x: t.x, y: t.y }));
+        u.mineTile = null; // pickNextMineTile chooses on the first tick
+        u.depositId = null;
+        u.carrying = null;
+        u.targetId = null;
+        u.buildTargetId = null;
+        u.path = null;
+      }
+      return;
+    }
+    case "setStance": {
+      for (const id of cmd.unitIds) {
+        const u = getUnit(s, id);
+        if (u) u.stance = cmd.stance;
       }
       return;
     }
@@ -824,9 +1021,14 @@ export function applyCommand(s: GameState, cmd: Command): void {
       return;
     }
     case "build": {
-      const worker = cmd.unitIds.map((id) => getUnit(s, id)).find((u) => u && u.type === "worker") ?? null;
-      if (!worker) return;
-      placeBuilding(s, worker.owner, cmd.buildingType, cmd.tx, cmd.ty, worker);
+      const workers = cmd.unitIds
+        .map((id) => getUnit(s, id))
+        .filter((u): u is Unit => !!u && u.type === "worker");
+      if (workers.length === 0) return;
+      const b = placeBuilding(s, workers[0].owner, cmd.buildingType, cmd.tx, cmd.ty, workers[0]);
+      if (!b) return;
+      // Extra selected workers pile on for a faster (co-op) build.
+      for (let i = 1; i < workers.length; i++) assignBuilder(workers[i], b);
       return;
     }
     case "train": {

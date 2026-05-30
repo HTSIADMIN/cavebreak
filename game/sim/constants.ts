@@ -27,6 +27,14 @@ export const GAS_GATHER_TIME_S = 2.0;
 export const WALL_CLEAR_MINERAL_BONUS = 5;
 export const STARTING_WORKERS = 2;
 
+// --- Construction ---
+// SC2 Protoss warps buildings in hands-free; Cavebreak instead ties the builder(s) to
+// the site for the whole build (a worker can't do anything else while building), and lets
+// extra builders stack their labor like cooperative wall-mining. Each adjacent builder
+// advances the build by `dt` per tick (1 builder ≈ buildTime; N builders ≈ buildTime / N),
+// capped at MAX_BUILDERS so a swarm can't trivialize it.
+export const MAX_BUILDERS = 4;
+
 // --- Map ---
 export const MAP_W = 64;
 export const MAP_H = 64;
