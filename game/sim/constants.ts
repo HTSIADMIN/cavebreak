@@ -40,6 +40,17 @@ export const MAP_W = 64;
 export const MAP_H = 64;
 export const START_POCKET_RADIUS = 1; // 1-tile ring around the 2x2 Nexus → a 4x4 pocket
 
+// --- Unit collision (soft separation) ---
+// Units softly push apart so they don't stack in one spot; walls + structures are HARD (the
+// push is clamped to walkable floor). Radii are per-state: miners are tiny (mining crews pass
+// through each other) and fighters shrink to ~half a tile so they can slip past in a 1-wide
+// tunnel. (docs/combat.md)
+export const COLLISION_RADIUS = {
+  worker: 0.12, // tiny — mining/gathering crews overlap freely
+  combat: 0.38, // normal spacing for idle/moving combat units
+  fighting: 0.25, // ~half a tile while attacking — squeeze past in tight tunnels
+};
+
 // --- Power & shields ---
 export const POWER_RADIUS = 6.5;
 export const SHIELD_REGEN_DELAY = 5; // seconds after taking damage before shields regen
