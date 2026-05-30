@@ -349,17 +349,39 @@ export function renderGame(
     ctx.globalAlpha = 1;
   }
 
-  // Placement ghost.
+  // Placement ghost — same sprite as a real building, tinted green/red for valid/invalid.
   if (view.placement) {
     const st = BUILDING_STATS[view.placement.type];
     const sx = cam.worldToScreenX(view.placement.tx);
     const sy = cam.worldToScreenY(view.placement.ty);
+    const pw = st.w * scale;
+    const ph = st.h * scale;
     ctx.fillStyle = view.placement.valid ? "rgba(124,252,124,0.3)" : "rgba(255,80,80,0.3)";
-    ctx.fillRect(sx, sy, st.w * scale, st.h * scale);
+    ctx.fillRect(sx, sy, pw, ph);
+    ctx.globalAlpha = 0.9;
+    const gimg = buildingImage(view.placement.type);
+    if (!drawFit(ctx, gimg, sx + pw / 2, sy + ph / 2, pw - 6, ph - 6)) {
+      drawBuildingIcon(ctx, view.placement.type, sx + pw / 2, sy + ph / 2, Math.min(st.w, st.h) * scale * 0.7);
+    }
+    ctx.globalAlpha = 1;
     ctx.strokeStyle = view.placement.valid ? "#7CFC7C" : "#ff5050";
     ctx.lineWidth = 2;
-    ctx.strokeRect(sx, sy, st.w * scale, st.h * scale);
-    drawBuildingIcon(ctx, view.placement.type, sx + (st.w * scale) / 2, sy + (st.h * scale) / 2, Math.min(st.w, st.h) * scale * 0.7);
+    ctx.strokeRect(sx, sy, pw, ph);
+  }
+
+  // Map border — a cave-rim frame around the whole playable area, drawn on top of fog so the
+  // edges of the world are visible at all times (even unexplored).
+  {
+    const bx = cam.worldToScreenX(0);
+    const by = cam.worldToScreenY(0);
+    const bw = grid.width * scale;
+    const bh = grid.height * scale;
+    ctx.strokeStyle = "rgba(198,180,142,0.9)";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.strokeStyle = "rgba(54,46,34,0.95)";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(bx + 2.5, by + 2.5, bw - 5, bh - 5);
   }
 
   // Drag-selection rectangle.
