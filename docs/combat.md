@@ -12,15 +12,19 @@ Combat resolution copies StarCraft 2's model: real-time, attribute-based damage 
 ## Targeting Rules
 
 - **Ground vs Air:** a weapon may hit ground only, air only, or both. Units with no anti-air can't touch flyers — classic SC2 constraint that drives composition.
-- Units auto-acquire targets in range when on attack-move or when an enemy enters range while idle (copy SC2 acquisition behavior).
+- Units auto-acquire targets in range when on attack-move or when an enemy enters range while idle (copy SC2 acquisition behavior) — **subject to the unit's stance** (below).
 
 ## Player Commands
 
 - **Move** — go to a point, ignore enemies.
 - **Attack-move (A-move)** — move toward a point but engage any enemy encountered en route. The bread-and-butter RTS command.
-- **Attack target** — focus-fire a specific unit/building.
+- **Attack target** — focus-fire a specific unit/building. An explicit attack order **always** applies (it ignores stance and chases).
 - **Stop / Hold position.**
-- Selection: single click, drag-box, double-click-to-select-type, control groups (number keys) — all copy SC2. (Keybinds live in [ui.md](./ui.md).)
+- **Stances** (control how a unit AUTO-engages, SC2-style — cycle with `Y` / the command card):
+  - **Aggressive** (default) — acquire and chase any enemy in sight.
+  - **Stand Ground** — hold position; auto-fire only on enemies already in weapon range, never chase ("go here and *stay* here").
+  - **Hold Fire** — never auto-attack; engage only when you explicitly order it.
+- Selection: single click, drag-box, select-all-of-type (quick-select bar), control groups (number keys) — all copy SC2. (Keybinds live in [ui.md](./ui.md).)
 
 ## Vision in Combat
 
@@ -52,3 +56,4 @@ Combat resolution copies StarCraft 2's model: real-time, attribute-based damage 
 - **2026-05-28 (melee + approach fixes)** — Fixed two combat-blocking bugs found while verifying the AI:
   - **Melee couldn't connect with units.** Units snap to tile centers, so the closest a melee attacker can stand to a stationary enemy is one tile away — center-distance **1.0** (orthogonal) or **~1.41** (diagonal), both beyond the 0.5 melee reach (`range + targetRadius` ≈ 0.9). So melee units could only ever hit *buildings* (radius 1.0 → reach 1.5). `inWeaponRange` now has a **tile-adjacency fallback** for melee (range ≤ 0.6): an attacker on a tile bordering the target's tile/footprint is in range. Melee vs units now works.
   - **Approach tiles resolved under buildings.** `nearestAdjacentFloor` (terrain-only) could pick a tile that is grid-FLOOR but sits *under a building* (terrain stays floor beneath structures). The pathfinder blocks building footprints, so `findPath` to that tile returned null and the attacker **froze**, oscillating `attacking↔attack_moving` forever (it bit an army assaulting an enemy worker hugging its Nexus). New `freeAdjacentTile` (in `world.ts`) excludes building-occupied tiles; combat/harvest/mine approaches and the move command's `walkableGoal` now use it.
+- **2026-05-30 (stances)** — Added per-unit `Unit.stance` (`aggressive` / `standGround` / `holdFire`) + the `setStance` command, gating **auto** acquisition only. The idle auto-acquire now goes through `acquireAuto`: holdFire returns nothing; standGround only locks onto enemies already in weapon range and **won't chase** (if an auto target leaves range it drops it); aggressive sweeps full sight as before. Explicit `attack` orders set `Unit.autoTarget = false` and always chase regardless of stance; attack-move still acquires aggressively (it's an explicit order). This fixes "units wander off / auto-attack when I didn't ask." AI units stay `aggressive` (default), so AI behavior is unchanged. Also added `Unit.facing` (updated as units move/attack) which drives sprite rotation + the vision-cone visual ([fog-of-war.md](./fog-of-war.md)).

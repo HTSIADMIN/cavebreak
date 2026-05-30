@@ -63,8 +63,9 @@ export function createInitialState(setup?: Partial<MatchSetup>): GameState {
         x: w.x + 0.5, y: w.y + 0.5,
         hp: ws.hp, maxHp: ws.hp, shields: ws.shields, maxShields: ws.shields, shieldRegenCd: 0,
         state: "idle", // nothing reachable yet — mine out to find resources
-        path: null, moveGoal: null, mineTile: null, depositId: null, carrying: null, gatherProgress: 0,
-        buildTargetId: null, targetId: null, attackGoal: null, attackCd: 0, repathCd: 0,
+        facing: -Math.PI / 2, stance: "aggressive",
+        path: null, moveGoal: null, mineTile: null, mineQueue: null, depositId: null, carrying: null, gatherProgress: 0,
+        buildTargetId: null, targetId: null, autoTarget: false, attackGoal: null, attackCd: 0, repathCd: 0,
       });
     }
 
@@ -85,8 +86,19 @@ export function createInitialState(setup?: Partial<MatchSetup>): GameState {
   mapDef.placeResources(ctx);
   mapDef.carve(ctx);
 
+  // Per-player stat tallies seed with the starting state (their initial workers + Nexus).
+  const stats = players.map((p) => {
+    const startWorkers = units.filter((u) => u.owner === p.id).length;
+    return {
+      unitsProduced: startWorkers, unitsLost: 0, unitsKilled: 0,
+      buildingsConstructed: 1, buildingsLost: 0, buildingsDestroyed: 0,
+      mineralsGathered: 0, gasGathered: 0, peakSupply: p.supplyUsed,
+    };
+  });
+
   return {
     tick: 0, grid, players, units, buildings, deposits, nextId,
-    winner: null, visibility: new Uint8Array(MAP_W * MAP_H), events: [], wallProgress: new Map(),
+    winner: null, stats, endedTick: null,
+    visibility: new Uint8Array(MAP_W * MAP_H), events: [], wallProgress: new Map(),
   };
 }

@@ -16,6 +16,7 @@ import {
   MAP_LIST,
   MAP_W,
   MatchSetup,
+  Stance,
   step,
   TICK_RATE_HZ,
   TileType,
@@ -26,7 +27,21 @@ import {
 } from "@/game/sim";
 import { Camera } from "@/game/render/camera";
 import { renderGame, renderMinimap, RenderView } from "@/game/render/renderer";
-import { CommandCard, HudAction, HudData, PlayerStatus, SelectionPanel, TopBar, WinnerBanner } from "./Hud";
+import { CursorKind, cursorCss, preloadCursors, preloadSprites } from "@/game/render/sprites";
+import { CommandCard, HudAction, HudData, PlayerStatus, QuickGroup, QuickSelectBar, SelectionPanel, TopBar, WinnerBanner } from "./Hud";
+
+// Combat stances cycle in this order (Y / command card). Aggressive is the default.
+const STANCE_ORDER: Stance[] = ["aggressive", "standGround", "holdFire"];
+const STANCE_LABEL: Record<Stance, string> = {
+  aggressive: "Aggressive",
+  standGround: "Stand Ground",
+  holdFire: "Hold Fire",
+};
+const STANCE_DESC: Record<Stance, string> = {
+  aggressive: "Chase and attack any enemy in sight.",
+  standGround: "Hold position — fire on enemies in range but never chase.",
+  holdFire: "Never auto-attack; engage only when you order it.",
+};
 
 const LOCAL_PLAYER = 0;
 const PAN_SPEED = 24;
@@ -96,13 +111,33 @@ function computeSelection(s: GameState, sel: Set<number>): {
       opt("build:cybernetics", "C", "cybernetics", !has("gateway"));
       opt("build:forge", "F", "forge");
       opt("build:cannon", "T", "cannon");
+      actions.push({
+        id: "areaMine", key: "M", label: "Area Mine",
+        tooltip: "Area Mine (M) — drag a box over rock walls to queue these workers to clear the whole region.",
+      });
     }
     actions.push({ id: "stop", key: "S", label: "Stop", tooltip: "Stop — cancel current orders and hold position." });
+    const combat = units.filter((u) => u.type !== "worker");
+    if (combat.length > 0) {
+      const st = combat[0].stance;
+      const next = STANCE_ORDER[(STANCE_ORDER.indexOf(st) + 1) % STANCE_ORDER.length];
+      actions.push({
+        id: "stance:cycle", key: "Y", label: STANCE_LABEL[st],
+        active: st !== "aggressive", tone: st === "holdFire" ? "danger" : "default",
+        tooltip: `Stance: ${STANCE_LABEL[st]} — click / Y to cycle → ${STANCE_LABEL[next]}.\n${STANCE_DESC[st]}`,
+      });
+    }
     const hint =
       workers.length > 0
-        ? "Right-click: rock = mine · mineral/gas = gather · floor = move. A = attack-move."
-        : "A = attack-move · right-click an enemy to attack.";
-    return { title, sub: units.length === 1 ? stateLabel(units[0].state) : undefined, hint, actions };
+        ? "Right-click: rock = mine · mineral/gas = gather · floor = move. A = attack-move · M = area mine."
+        : "A = attack-move · right-click an enemy to attack · Y = stance.";
+    const sub =
+      units.length === 1
+        ? stateLabel(units[0].state) + (units[0].type !== "worker" ? ` · ${STANCE_LABEL[units[0].stance]}` : "")
+        : combat.length > 0
+          ? `Stance: ${STANCE_LABEL[combat[0].stance]}`
+          : undefined;
+    return { title, sub, hint, actions };
   }
 
   const b = s.buildings.find((bb) => sel.has(bb.id) && bb.owner === LOCAL_PLAYER);
@@ -138,6 +173,13 @@ function computeSelection(s: GameState, sel: Set<number>): {
       } else if (b.type === "cannon") {
         sub = "Static defense";
       }
+    }
+    if (b.built && (b.type === "nexus" || b.type === "gateway")) {
+      actions.push({
+        id: "rally", key: "R", label: b.rally ? "Move Rally" : "Set Rally", active: !!b.rally,
+        tooltip: "Set Rally (R) — then click a tile (or a mineral/geyser) where new units should gather. Right-click sets it too.",
+      });
+      if (b.rally) sub = (sub ? sub + " · " : "") + "rally set";
     }
     return { title: st.label, sub, actions };
   }
@@ -261,8 +303,10 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
   const camRef = useRef<Camera | null>(null);
   const selectedRef = useRef<Set<number>>(new Set());
   const keysRef = useRef<Set<string>>(new Set());
-  const dragRef = useRef<{ active: boolean; moved: boolean; x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const dragRef = useRef<{ active: boolean; moved: boolean; x0: number; y0: number; x1: number; y1: number; mine?: boolean } | null>(null);
   const attackModeRef = useRef(false);
+  const areaMineModeRef = useRef(false); // drag a rock region to queue mining
+  const rallyModeRef = useRef(false); // click to set a building's rally point
   const placementRef = useRef<BuildingType | null>(null);
   const mouseRef = useRef({ x: 0, y: 0 });
   const miniDragRef = useRef(false);
@@ -296,6 +340,13 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
     markersRef.current.push({ x: wx, y: wy, kind, t: 1 });
     if (markersRef.current.length > 64) markersRef.current.shift();
   }
+  function selectAllOfType(type: UnitType) {
+    const s = stateRef.current;
+    if (!s) return;
+    selectedRef.current = new Set(
+      s.units.filter((u) => u.owner === LOCAL_PLAYER && u.type === type).map((u) => u.id)
+    );
+  }
   function onAction(id: string) {
     if (id.startsWith("build:")) {
       if (selectedWorkerIds().length > 0) placementRef.current = id.slice(6) as BuildingType;
@@ -314,10 +365,43 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
     if (id === "stop") {
       const ids = selectedUnitIds();
       if (ids.length) dispatch({ type: "stop", unitIds: ids });
+      return;
+    }
+    if (id === "areaMine") {
+      if (selectedWorkerIds().length > 0) {
+        areaMineModeRef.current = true;
+        attackModeRef.current = false;
+        rallyModeRef.current = false;
+        placementRef.current = null;
+      }
+      return;
+    }
+    if (id === "rally") {
+      if (selectedBuilding()) {
+        rallyModeRef.current = true;
+        attackModeRef.current = false;
+        areaMineModeRef.current = false;
+        placementRef.current = null;
+      }
+      return;
+    }
+    if (id === "stance:cycle") {
+      const s = stateRef.current;
+      if (!s) return;
+      const combat = s.units.filter(
+        (u) => selectedRef.current.has(u.id) && u.owner === LOCAL_PLAYER && u.type !== "worker"
+      );
+      if (combat.length === 0) return;
+      const cur = combat[0].stance;
+      const next = STANCE_ORDER[(STANCE_ORDER.indexOf(cur) + 1) % STANCE_ORDER.length];
+      dispatch({ type: "setStance", unitIds: combat.map((u) => u.id), stance: next });
+      return;
     }
   }
 
   useEffect(() => {
+    preloadSprites();
+    preloadCursors();
     const state = createInitialState(setup);
     stateRef.current = state;
     const cam = new Camera();
@@ -470,11 +554,36 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
           attackModeRef.current = false;
           return;
         }
+        if (rallyModeRef.current) {
+          const { wx, wy } = worldAt(x, y);
+          const b = selectedBuilding();
+          if (b) {
+            const tx = Math.floor(wx);
+            const ty = Math.floor(wy);
+            dispatch({ type: "setRally", buildingId: b.id, tx, ty });
+            pushMarker(tx + 0.5, ty + 0.5, "move");
+          }
+          if (!e.shiftKey) rallyModeRef.current = false;
+          return;
+        }
+        if (areaMineModeRef.current) {
+          // Begin a rock-region drag; mouseup queues the enclosed walls to the workers.
+          dragRef.current = { active: true, moved: false, x0: x, y0: y, x1: x, y1: y, mine: true };
+          return;
+        }
         dragRef.current = { active: true, moved: false, x0: x, y0: y, x1: x, y1: y };
       } else if (e.button === 2) {
         e.preventDefault();
         if (placementRef.current) {
           placementRef.current = null;
+          return;
+        }
+        if (areaMineModeRef.current) {
+          areaMineModeRef.current = false;
+          return;
+        }
+        if (rallyModeRef.current) {
+          rallyModeRef.current = false;
           return;
         }
         attackModeRef.current = false;
@@ -504,6 +613,23 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
       const d = dragRef.current;
       if (!d?.active) return;
       dragRef.current = null;
+      if (d.mine) {
+        // Queue every rock tile in the dragged box to the selected workers as one area order.
+        const wx0 = Math.floor(Math.min(cam.screenToWorldX(d.x0), cam.screenToWorldX(d.x1)));
+        const wx1 = Math.floor(Math.max(cam.screenToWorldX(d.x0), cam.screenToWorldX(d.x1)));
+        const wy0 = Math.floor(Math.min(cam.screenToWorldY(d.y0), cam.screenToWorldY(d.y1)));
+        const wy1 = Math.floor(Math.max(cam.screenToWorldY(d.y0), cam.screenToWorldY(d.y1)));
+        const tiles: { x: number; y: number }[] = [];
+        for (let ty = wy0; ty <= wy1; ty++) {
+          for (let tx = wx0; tx <= wx1; tx++) {
+            if (getTile(state.grid, tx, ty) === TileType.ROCK) tiles.push({ x: tx, y: ty });
+          }
+        }
+        const ids = selectedWorkerIds();
+        if (tiles.length && ids.length) dispatch({ type: "mineArea", unitIds: ids, tiles });
+        if (!e.shiftKey) areaMineModeRef.current = false;
+        return;
+      }
       if (d.moved) boxSelect(d);
       else clickSelect(d.x0, d.y0, e.shiftKey);
     };
@@ -548,10 +674,13 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
       }
       const lk = k.toLowerCase();
       if (lk === "escape") {
-        if (placementRef.current) placementRef.current = null;
-        else {
-          selectedRef.current = new Set();
+        if (placementRef.current || attackModeRef.current || areaMineModeRef.current || rallyModeRef.current) {
+          placementRef.current = null;
           attackModeRef.current = false;
+          areaMineModeRef.current = false;
+          rallyModeRef.current = false;
+        } else {
+          selectedRef.current = new Set();
         }
         return;
       }
@@ -581,10 +710,22 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
       if (dx || dy) cam.pan(dx * PAN_SPEED * dt, dy * PAN_SPEED * dt, MAP_W, MAP_H, sizeRef.current.w, sizeRef.current.h);
     };
 
+    const quickTypes: UnitType[] = ["worker", "zealot", "stalker"];
     const pushHud = () => {
       const p = state.players[LOCAL_PLAYER];
       const selInfo = computeSelection(state, selectedRef.current);
       actionsRef.current = selInfo.actions;
+      const quickGroups: QuickGroup[] = quickTypes
+        .map((t) => {
+          const list = state.units.filter((u) => u.owner === LOCAL_PLAYER && u.type === t);
+          return {
+            type: t,
+            label: UNIT_STATS[t].label,
+            count: list.length,
+            selected: list.some((u) => selectedRef.current.has(u.id)),
+          };
+        })
+        .filter((g) => g.count > 0);
       setHud({
         minerals: p.minerals, gas: p.gas, supplyUsed: p.supplyUsed, supplyMax: p.supplyMax,
         winner: state.winner, localPlayer: LOCAL_PLAYER, localDefeated: p.defeated,
@@ -595,8 +736,35 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
           isLocal: pl.id === LOCAL_PLAYER,
         })),
         title: selInfo.title, sub: selInfo.sub, hint: selInfo.hint, actions: selInfo.actions,
+        quickGroups,
+        stats: state.stats,
+        durationSec: (state.endedTick ?? state.tick) / TICK_RATE_HZ,
       });
     };
+
+    // The contextual action cursor (mine/build/attack/move/…) from the current mode + hover.
+    const computeCursor = (): CursorKind => {
+      if (placementRef.current) {
+        const t = placementTile();
+        return t && canPlaceBuilding(state, LOCAL_PLAYER, placementRef.current, t.tx, t.ty) && selectedWorkerIds().length > 0
+          ? "build"
+          : "invalid";
+      }
+      if (attackModeRef.current) return "attack";
+      if (areaMineModeRef.current) return "mine";
+      if (rallyModeRef.current) return "rally";
+      const { wx, wy } = worldAt(mouseRef.current.x, mouseRef.current.y);
+      const tx = Math.floor(wx);
+      const ty = Math.floor(wy);
+      if (selectedUnitIds().length > 0) {
+        if (pickEnemyAt(wx, wy) !== null) return "attack";
+        const t = getTile(state.grid, tx, ty);
+        if (selectedWorkerIds().length > 0 && (t === TileType.ROCK || t === TileType.MINERAL || t === TileType.GEYSER)) return "mine";
+        if (t === TileType.FLOOR) return "move";
+      }
+      return "default";
+    };
+    let lastCursor = "";
 
     const draw = () => {
       const { w, h } = sizeRef.current;
@@ -607,17 +775,33 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
         const t = placementTile();
         if (t) placement = { type: ptype, tx: t.tx, ty: t.ty, valid: canPlaceBuilding(state, LOCAL_PLAYER, ptype, t.tx, t.ty) && selectedWorkerIds().length > 0 };
       }
+      let mineArea: RenderView["mineArea"] = null;
+      if (d?.active && d.mine && d.moved) {
+        mineArea = {
+          x0: Math.floor(cam.screenToWorldX(d.x0)),
+          y0: Math.floor(cam.screenToWorldY(d.y0)),
+          x1: Math.floor(cam.screenToWorldX(d.x1)),
+          y1: Math.floor(cam.screenToWorldY(d.y1)),
+        };
+      }
       const view: RenderView = {
         selected: selectedRef.current,
         hovered: hoveredRef.current,
         localPlayer: LOCAL_PLAYER,
-        dragScreen: d?.active && d.moved ? { x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1 } : null,
+        dragScreen: d?.active && d.moved && !d.mine ? { x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1 } : null,
         placement,
         markers: markersRef.current,
         effects: effectsRef.current,
+        mineArea,
+        time: performance.now(),
       };
       renderGame(ctx, w, h, state, cam, view);
       renderMinimap(mctx, mini.clientWidth, mini.clientHeight, state, cam, w, h);
+      const cur = cursorCss(computeCursor());
+      if (cur !== lastCursor) {
+        canvas.style.cursor = cur;
+        lastCursor = cur;
+      }
     };
 
     // Simulation runs on a fixed-timestep interval (independent of display refresh,
@@ -697,23 +881,29 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
           winner={hud.winner}
           localPlayer={hud.localPlayer}
           localDefeated={hud.localDefeated}
+          players={hud.players}
+          stats={hud.stats}
+          durationSec={hud.durationSec}
           onRestart={onRestart}
           onMenu={onMenu}
         />
       </div>
-      <div className="flex h-44 items-stretch border-t border-zinc-800 bg-zinc-950">
-        <div className="p-2">
-          <canvas
-            ref={miniRef}
-            className="h-40 w-40 rounded border border-zinc-800 bg-black"
-            onMouseDown={(e) => { miniDragRef.current = true; miniGoto(e); }}
-            onMouseMove={(e) => { if (miniDragRef.current) miniGoto(e); }}
-            onMouseUp={() => (miniDragRef.current = false)}
-            onMouseLeave={() => (miniDragRef.current = false)}
-          />
+      <div className="flex flex-col border-t border-zinc-800 bg-zinc-950">
+        <QuickSelectBar groups={hud.quickGroups} onSelectType={selectAllOfType} />
+        <div className="flex h-40 items-stretch">
+          <div className="p-2">
+            <canvas
+              ref={miniRef}
+              className="h-36 w-36 rounded border border-zinc-800 bg-black"
+              onMouseDown={(e) => { miniDragRef.current = true; miniGoto(e); }}
+              onMouseMove={(e) => { if (miniDragRef.current) miniGoto(e); }}
+              onMouseUp={() => (miniDragRef.current = false)}
+              onMouseLeave={() => (miniDragRef.current = false)}
+            />
+          </div>
+          <SelectionPanel title={hud.title} sub={hud.sub} hint={hud.hint} />
+          <CommandCard actions={hud.actions} onAction={onAction} />
         </div>
-        <SelectionPanel title={hud.title} sub={hud.sub} hint={hud.hint} />
-        <CommandCard actions={hud.actions} onAction={onAction} />
       </div>
     </div>
   );

@@ -48,7 +48,7 @@ Each tier of unit comes from a dedicated production building. SC2 Terran templat
 
 - Buildings occupy a footprint of `FLOOR` tiles and block pathing while present.
 - Extractors are the exception — placed on `GEYSER`.
-- Workers construct buildings (worker enters `constructing` state); copy SC2's "worker builds it" model rather than instant placement.
+- Workers construct buildings (worker enters `constructing` state); copy SC2's "worker builds it" model rather than instant placement. **Cavebreak deviation:** the builder is **tied up for the whole build** (it can't gather/fight meanwhile), and **assigning multiple workers builds it faster** (their labor stacks, cooperatively, like wall-mining) — see Implementation Notes.
 
 ## Related Systems
 
@@ -70,3 +70,5 @@ Each tier of unit comes from a dedicated production building. SC2 Terran templat
   - **Construction is Protoss-style**: a worker walks to the site and initiates the warp-in (`started`), then the building self-completes over its build time (`buildProgress`) while the worker frees up. Can't-reach cancels and refunds.
   - Deferred: tech/upgrade building, add-ons, gas Extractor as a separate structure (gas is currently harvested directly from a geyser — see [mining.md](./mining.md)).
 - **2026-05-28 (update)** — Added **Cybernetics Core** (requires Gateway; unlocks the Stalker) and **Forge** (researches Ground Weapons/Armor) — both 2×2 and require power. The **Nexus is now buildable** by workers (expansion). All structures have plasma shields. Still deferred: gas Extractor structure, add-ons.
+- **2026-05-30 (tied-up + cooperative construction)** — Replaced the hands-free "warp-in" model with an SCV-style one (per owner request): a worker assigned to `build` walks to the site and **stays in `constructing` until the structure completes** — it's fully tied up (can't mine/gather/fight) and then auto-returns to gathering. **Multiple builders stack:** `updateConstruction` advances `buildProgress` by `dt × min(adjacentBuilders, MAX_BUILDERS)` (4), mirroring cooperative wall-mining — 2 workers finish in ≈ half the time. The `build` command now assigns **every selected worker** to the site. Progress only advances while a builder is on site; a misplaced build with no reachable builder and no progress refunds. (`world.ts`, `MAX_BUILDERS` in `constants.ts`.)
+- **2026-05-30 (rally for Nexus + Gateway)** — Rally points now route **workers** too, not just army: a Nexus/Gateway rally on (or next to) a mineral/geyser sends new workers straight onto it to auto-harvest; otherwise the unit walks to the rally tile. Set it from the command card's **Set Rally** button or by right-clicking with the building selected; the renderer draws a flag + link line for the selected building. (`spawnUnit` in `world.ts`, [ui.md](./ui.md).)
