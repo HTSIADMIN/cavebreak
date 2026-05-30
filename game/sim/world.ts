@@ -1031,6 +1031,26 @@ export function applyCommand(s: GameState, cmd: Command): void {
       for (let i = 1; i < workers.length; i++) assignBuilder(workers[i], b);
       return;
     }
+    case "assistBuild": {
+      // Send more workers to help finish an already-placed building (speeds it up).
+      const b = getBuilding(s, cmd.buildingId);
+      if (!b || b.built) return;
+      for (const id of cmd.unitIds) {
+        const u = getUnit(s, id);
+        if (u && u.type === "worker") assignBuilder(u, b);
+      }
+      return;
+    }
+    case "demolish": {
+      // Destroy your own building. Cancelling one still under construction refunds its cost
+      // (SC2-style); demolishing a finished one does not. Any tied builders are freed.
+      const b = getBuilding(s, cmd.buildingId);
+      if (!b) return;
+      for (const u of s.units) if (u.buildTargetId === b.id) becomeIdle(u);
+      if (!b.built) refundBuilding(s, b);
+      else s.buildings = s.buildings.filter((x) => x.id !== b.id);
+      return;
+    }
     case "train": {
       const b = getBuilding(s, cmd.buildingId);
       if (b) enqueueTrain(s, b, cmd.unitType);

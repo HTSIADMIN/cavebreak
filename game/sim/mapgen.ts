@@ -12,7 +12,8 @@ export function createInitialState(setup?: Partial<MatchSetup>): GameState {
   const mapDef: MapDef = (setup?.mapId && MAPS[setup.mapId]) || MAPS[DEFAULT_MAP_ID];
   const aiDifficulties: Difficulty[] = (setup?.aiDifficulties ?? ["medium"]).slice(0, mapDef.maxPlayers - 1);
   const numPlayers = Math.min(mapDef.maxPlayers, 1 + aiDifficulties.length);
-  const seed = setup?.seed ?? 1337;
+  // Randomize each match's resource layout unless a seed is pinned (e.g. multiplayer/tests).
+  const seed = setup?.seed ?? Math.floor(Math.random() * 0x7fffffff);
 
   const grid = createGrid(MAP_W, MAP_H);
   // Outer border + the map's silhouette (e.g. a circular rim) are unmineable BOUNDARY.

@@ -84,21 +84,21 @@ export interface UnitStats {
 
 export const UNIT_STATS: Record<UnitType, UnitStats> = {
   worker: {
-    label: "Worker", minerals: 50, gas: 0, supply: 1,
+    label: "Miner", minerals: 50, gas: 0, supply: 1,
     hp: 20, shields: 20, armor: 0, attributes: ["light", "mechanical"],
     buildTime: 12, speed: 3.0, sight: 8, wallMineTime: 10,
     damage: 5, range: 0.5, cooldown: 1.5, bonusVsArmored: 0, bonusVsLight: 0,
     producedBy: "nexus", requires: null,
   },
   zealot: {
-    label: "Zealot", minerals: 100, gas: 0, supply: 2,
+    label: "Brawler", minerals: 100, gas: 0, supply: 2,
     hp: 100, shields: 50, armor: 1, attributes: ["light", "biological"],
     buildTime: 27, speed: 3.15, sight: 9, wallMineTime: 5,
     damage: 16, range: 0.5, cooldown: 1.2, bonusVsArmored: 0, bonusVsLight: 0,
     producedBy: "gateway", requires: null,
   },
   stalker: {
-    label: "Stalker", minerals: 125, gas: 50, supply: 2,
+    label: "Gunner", minerals: 125, gas: 50, supply: 2,
     hp: 80, shields: 80, armor: 1, attributes: ["armored", "mechanical"],
     buildTime: 32, speed: 4.0, sight: 10, wallMineTime: 3,
     damage: 13, range: 6, cooldown: 1.4, bonusVsArmored: 5, bonusVsLight: 0,
@@ -133,7 +133,7 @@ const STRUCTURE_ATTRS: Attribute[] = ["armored", "mechanical"];
 
 export const BUILDING_STATS: Record<BuildingType, BuildingStats> = {
   nexus: {
-    label: "Nexus", minerals: 400, gas: 0, hp: 1000, shields: 1000, armor: 1, attributes: STRUCTURE_ATTRS,
+    label: "Base", minerals: 400, gas: 0, hp: 1000, shields: 1000, armor: 1, attributes: STRUCTURE_ATTRS,
     buildTime: 60, w: 2, h: 2, supply: 15, needsPower: false, providesPower: false, researches: false,
     requires: null, sight: 11, produces: ["worker"], damage: 0, range: 0, cooldown: 0,
   },

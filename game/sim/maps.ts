@@ -28,8 +28,6 @@ export function mulberry32(a: number) {
   };
 }
 
-const mirror = (v: Vec2): Vec2 => ({ x: MAP_W - 1 - v.x, y: MAP_H - 1 - v.y });
-
 export interface StartPlan {
   nexusTopLeft: Vec2;
   floors: Vec2[];
@@ -114,106 +112,70 @@ function placeCluster(ctx: MapGenCtx, cx: number, cy: number, size: number, gold
   }
 }
 
-// Carve a straight corridor (ROCK → FLOOR) of half-width `rad`; leaves resource tiles intact.
-function carveLine(grid: Grid, ax: number, ay: number, bx: number, by: number, rad: number) {
-  const steps = Math.max(Math.abs(bx - ax), Math.abs(by - ay), 1);
-  for (let i = 0; i <= steps; i++) {
-    const x = Math.round(ax + ((bx - ax) * i) / steps);
-    const y = Math.round(ay + ((by - ay) * i) / steps);
-    for (let dy = -rad; dy <= rad; dy++) {
-      for (let dx = -rad; dx <= rad; dx++) {
-        if (getTile(grid, x + dx, y + dy) === TileType.ROCK) setTile(grid, x + dx, y + dy, TileType.FLOOR);
-      }
+// Guarantee one near mineral field per active start so nobody is starved by the RNG.
+function placeNearCluster(ctx: MapGenCtx, c: Vec2) {
+  for (let tries = 0; tries < 60; tries++) {
+    const ang = ctx.rng() * Math.PI * 2;
+    const dist = 5 + ctx.rng() * 4; // 5–9 tiles: a short dig out of the pocket
+    const x = Math.round(c.x + Math.cos(ang) * dist);
+    const y = Math.round(c.y + Math.sin(ang) * dist);
+    if (getTile(ctx.grid, x, y) === TileType.ROCK && !tooClose(ctx.centers, x, y, 4)) {
+      placeCluster(ctx, x, y, 5, false);
+      return;
     }
   }
 }
 
-// Winding corridor through the contested center, then to the far base (the original 1v1 feel).
-function windingCorridor(ctx: MapGenCtx) {
-  const mid = { x: MAP_W / 2, y: MAP_H / 2 };
-  const c0 = ctx.centers[0];
-  const c1 = ctx.centers[ctx.centers.length - 1];
-  carveLine(ctx.grid, c0.x, c0.y, mid.x - 6, mid.y + 6, 1);
-  carveLine(ctx.grid, mid.x - 6, mid.y + 6, mid.x, mid.y, 1);
-  carveLine(ctx.grid, mid.x, mid.y, mid.x + 6, mid.y - 6, 1);
-  carveLine(ctx.grid, mid.x + 6, mid.y - 6, c1.x, c1.y, 1);
+// Randomized resource layout (seeded): each start gets one guaranteed near field, then mineral
+// + gas clusters (some golden) are scattered at random across the cave. No symmetry — every
+// match is a fresh prospect, and you must mine your own way to everything.
+function randomResources(ctx: MapGenCtx) {
+  const { rng, grid, centers } = ctx;
+  for (const c of centers) placeNearCluster(ctx, c);
+  const target = 16;
+  let placed = 0;
+  for (let attempts = 0; placed < target && attempts < 600; attempts++) {
+    const x = 4 + Math.floor(rng() * (MAP_W - 8));
+    const y = 4 + Math.floor(rng() * (MAP_H - 8));
+    if (getTile(grid, x, y) !== TileType.ROCK) continue;
+    if (tooClose(centers, x, y, 7)) continue; // not right on top of a base
+    if (ctx.deposits.some((d) => (d.tx - x) ** 2 + (d.ty - y) ** 2 < 5 * 5)) continue; // keep spread out
+    placeCluster(ctx, x, y, 4 + Math.floor(rng() * 3), rng() < 0.22);
+    placed++;
+  }
 }
 
-// Hub-and-spoke: every active base gets a corridor to the center, so all players meet there.
-function spokesToCenter(ctx: MapGenCtx) {
-  const mid = { x: MAP_W / 2, y: MAP_H / 2 };
-  for (const c of ctx.centers) carveLine(ctx.grid, c.x, c.y, mid.x, mid.y, 1);
-}
+// Maps no longer pre-carve corridors — you start sealed and must mine your own way out.
+const noCarve = () => { /* sealed start: dig your own tunnels */ };
 
 // --- Map 1: Cavern Duel (2 players, square) — the classic 1v1. -----------------------
 const cavern: MapDef = {
   id: "cavern",
   name: "Cavern Duel",
-  description: "Square cavern, two bases on opposite corners linked by a winding central corridor. Best for 1v1.",
+  description: "Square cavern, two bases on opposite corners. Sealed start — mine your own way to randomized resource fields. Best for 1v1.",
   maxPlayers: 2,
   starts: [pocketPlan(11, 11), pocketPlan(MAP_W - 13, MAP_H - 13)],
-  placeResources(ctx) {
-    for (const a of [{ x: 18, y: 12 }, { x: 12, y: 18 }]) {
-      placeCluster(ctx, a.x, a.y, 5, false);
-      const m = mirror(a);
-      placeCluster(ctx, m.x, m.y, 5, false);
-    }
-    const normalPairs: [Vec2, Vec2][] = [
-      [{ x: 16, y: 32 }, { x: 47, y: 31 }],
-      [{ x: 32, y: 16 }, { x: 31, y: 47 }],
-      [{ x: 48, y: 32 }, { x: 15, y: 31 }],
-      [{ x: 32, y: 48 }, { x: 31, y: 15 }],
-    ];
-    for (const [a, b] of normalPairs) {
-      const size = 4 + Math.floor(ctx.rng() * 3);
-      placeCluster(ctx, a.x, a.y, size, false);
-      placeCluster(ctx, b.x, b.y, size, false);
-    }
-    placeCluster(ctx, 32, 32, 6, true);
-    for (const [a, b] of [[{ x: 22, y: 42 }, { x: 41, y: 21 }], [{ x: 42, y: 22 }, { x: 21, y: 41 }]] as [Vec2, Vec2][]) {
-      placeCluster(ctx, a.x, a.y, 5, true);
-      placeCluster(ctx, b.x, b.y, 5, true);
-    }
-  },
-  carve: windingCorridor,
+  placeResources: randomResources,
+  carve: noCarve,
 };
 
 // --- Map 2: Four Corners (up to 4 players, square) — contested golden center. ---------
 const corners: MapDef = {
   id: "corners",
   name: "Four Corners",
-  description: "Square arena with bases in the four corners and a rich golden field at the contested center. 2–4 players.",
+  description: "Square arena with bases in the four corners. Sealed start — mine out to randomized resource fields. 2–4 players.",
   maxPlayers: 4,
   // Ordered TL, BR, TR, BL so 2 players take opposite corners.
   starts: [pocketPlan(11, 11), pocketPlan(51, 51), pocketPlan(51, 11), pocketPlan(11, 51)],
-  placeResources(ctx) {
-    // A short-dig field for each corner (placed for every corner for symmetry; skipped
-    // automatically if it overlaps an active base).
-    const near: Vec2[] = [
-      { x: 18, y: 12 }, { x: 12, y: 18 }, // TL
-      { x: 46, y: 52 }, { x: 52, y: 46 }, // BR
-      { x: 46, y: 12 }, { x: 52, y: 18 }, // TR
-      { x: 18, y: 52 }, { x: 12, y: 46 }, // BL
-    ];
-    for (const c of near) placeCluster(ctx, c.x, c.y, 5, false);
-    // Mid-edge normal expansions.
-    for (const m of [{ x: 32, y: 13 }, { x: 32, y: 50 }, { x: 13, y: 32 }, { x: 50, y: 32 }]) {
-      placeCluster(ctx, m.x, m.y, 5, false);
-    }
-    // Golden core + four golden mid fields between the corners and center.
-    placeCluster(ctx, 32, 32, 8, true);
-    for (const g of [{ x: 23, y: 23 }, { x: 40, y: 40 }, { x: 40, y: 23 }, { x: 23, y: 40 }]) {
-      placeCluster(ctx, g.x, g.y, 5, true);
-    }
-  },
-  carve: spokesToCenter,
+  placeResources: randomResources,
+  carve: noCarve,
 };
 
 // --- Map 3: Crater (up to 4 players, circular) — a round cavern around a golden core. -
 const crater: MapDef = {
   id: "crater",
   name: "Crater",
-  description: "A round cavern: unmineable rim, bases at N/S/E/W, and a golden core in the middle. 2–4 players.",
+  description: "A round cavern with an unmineable rim and bases at N/S/E/W. Sealed start — dig to randomized resources. 2–4 players.",
   maxPlayers: 4,
   // Ordered N, S, E, W so 2 players take opposite poles.
   starts: [pocketPlan(31, 11), pocketPlan(31, 51), pocketPlan(51, 31), pocketPlan(11, 31)],
@@ -222,21 +184,8 @@ const crater: MapDef = {
     const dy = y - (MAP_H / 2 - 0.5);
     return dx * dx + dy * dy > 30 * 30; // outside the inscribed circle ⇒ solid rim
   },
-  placeResources(ctx) {
-    // Two near fields per pole, offset inward toward the core.
-    const near: Vec2[] = [
-      { x: 24, y: 16 }, { x: 38, y: 16 }, // N
-      { x: 24, y: 47 }, { x: 38, y: 47 }, // S
-      { x: 47, y: 24 }, { x: 47, y: 38 }, // E
-      { x: 16, y: 24 }, { x: 16, y: 38 }, // W
-    ];
-    for (const c of near) placeCluster(ctx, c.x, c.y, 5, false);
-    placeCluster(ctx, 32, 32, 8, true); // golden core
-    for (const g of [{ x: 23, y: 23 }, { x: 40, y: 40 }, { x: 40, y: 23 }, { x: 23, y: 40 }]) {
-      placeCluster(ctx, g.x, g.y, 5, true);
-    }
-  },
-  carve: spokesToCenter,
+  placeResources: randomResources,
+  carve: noCarve,
 };
 
 // --- Map 4: Hourglass (2 players, central choke) — top vs bottom, split by an -------
@@ -244,27 +193,13 @@ const crater: MapDef = {
 const hourglass: MapDef = {
   id: "hourglass",
   name: "Hourglass",
-  description: "Top vs bottom, divided by an unmineable wall with a single central gap — a natural defensible choke. 1v1.",
+  description: "Top vs bottom, divided by an unmineable wall with a single central gap — a natural defensible choke. Sealed start — dig to the gap. 1v1.",
   maxPlayers: 2,
   starts: [pocketPlan(31, 11), pocketPlan(31, 51)],
   // A 2-tile-thick solid wall across the middle, broken only by a 6-wide gap at center.
   shapeMask: (x, y) => (y === 31 || y === 32) && (x < 29 || x > 34),
-  placeResources(ctx) {
-    const vmir = (v: Vec2): Vec2 => ({ x: v.x, y: MAP_H - 1 - v.y });
-    for (const a of [{ x: 24, y: 13 }, { x: 39, y: 14 }, { x: 14, y: 23 }, { x: 50, y: 23 }]) {
-      placeCluster(ctx, a.x, a.y, 5, false);
-      const m = vmir(a);
-      placeCluster(ctx, m.x, m.y, 5, false);
-    }
-    // Contested golden fields flanking the choke — off the central corridor (minerals
-    // are impassable, so a cluster on the centerline would wall the gap shut).
-    placeCluster(ctx, 23, 27, 6, true);
-    placeCluster(ctx, 40, 36, 6, true);
-  },
-  carve(ctx) {
-    const gap = { x: 31, y: 31 };
-    for (const c of ctx.centers) carveLine(ctx.grid, c.x, c.y, gap.x, gap.y, 1);
-  },
+  placeResources: randomResources,
+  carve: noCarve,
 };
 
 export const MAPS: Record<string, MapDef> = { cavern, hourglass, corners, crater };

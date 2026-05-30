@@ -64,20 +64,20 @@ function costStr(m: number, g: number): string {
 }
 
 const SHORT_LABEL: Record<BuildingType, string> = {
-  nexus: "Nexus", pylon: "Pylon", gateway: "Gateway", cybernetics: "Cyber", forge: "Forge", cannon: "Cannon",
+  nexus: "Base", pylon: "Generator", gateway: "Barracks", cybernetics: "Lab", forge: "Forge", cannon: "Turret",
 };
 const BUILDING_DESC: Record<BuildingType, string> = {
-  nexus: "Townhall — builds Workers, resource drop-off, +15 supply.",
-  pylon: "+8 supply and projects a power field that nearby buildings need.",
-  gateway: "Produces Zealots and Stalkers. Must sit in a power field.",
-  cybernetics: "Unlocks the Stalker. Must sit in a power field.",
+  nexus: "Townhall — trains Miners, drops off resources, +15 supply.",
+  pylon: "+8 supply and projects a power field nearby buildings need.",
+  gateway: "Trains Brawlers and Gunners. Must sit in a power field.",
+  cybernetics: "Unlocks the Gunner. Must sit in a power field.",
   forge: "Researches Ground Weapon / Armor upgrades. Must sit in a power field.",
   cannon: "Static defense — auto-attacks enemies in range. Must sit in a power field.",
 };
 const UNIT_DESC: Record<UnitType, string> = {
   worker: "Mines walls, gathers minerals/gas, and constructs buildings.",
   zealot: "Tanky melee fighter; also clears walls fast.",
-  stalker: "Ranged attacker, bonus vs Armored. Needs a Cybernetics Core.",
+  stalker: "Ranged attacker, bonus vs Armored. Needs a Tech Lab.",
 };
 
 // Build the selection summary + command-card actions from current state + selection.
@@ -144,18 +144,18 @@ function computeSelection(s: GameState, sel: Set<number>): {
   if (b) {
     const st = BUILDING_STATS[b.type];
     const actions: HudAction[] = [];
-    let sub = b.built ? undefined : "Warping in…";
+    let sub = b.built ? undefined : "Under construction";
     if (b.built) {
       if (b.type === "nexus") {
         const ws = UNIT_STATS.worker;
-        actions.push({ id: "train:worker", key: "Q", label: "Worker", cost: costStr(ws.minerals, ws.gas), disabled: p.minerals < ws.minerals || p.supplyUsed + ws.supply > p.supplyMax, tooltip: `Worker · ${costStr(ws.minerals, ws.gas)} · 1 supply · ${ws.buildTime}s\n${UNIT_DESC.worker}` });
+        actions.push({ id: "train:worker", key: "Q", label: ws.label, cost: costStr(ws.minerals, ws.gas), disabled: p.minerals < ws.minerals || p.supplyUsed + ws.supply > p.supplyMax, tooltip: `${ws.label} · ${costStr(ws.minerals, ws.gas)} · 1 supply · ${ws.buildTime}s\n${UNIT_DESC.worker}` });
         sub = `Queue: ${b.queue.length} · supply +${st.supply}`;
       } else if (b.type === "gateway") {
         const z = UNIT_STATS.zealot, k = UNIT_STATS.stalker;
         const cyber = has("cybernetics");
-        actions.push({ id: "train:zealot", key: "Q", label: "Zealot", cost: costStr(z.minerals, z.gas), disabled: p.minerals < z.minerals || p.supplyUsed + z.supply > p.supplyMax, tooltip: `Zealot · ${costStr(z.minerals, z.gas)} · ${z.supply} supply · ${z.buildTime}s\n${UNIT_DESC.zealot}` });
-        actions.push({ id: "train:stalker", key: "W", label: "Stalker", cost: costStr(k.minerals, k.gas), disabled: !cyber || p.minerals < k.minerals || p.gas < k.gas || p.supplyUsed + k.supply > p.supplyMax, tooltip: `Stalker · ${costStr(k.minerals, k.gas)} · ${k.supply} supply · ${k.buildTime}s\n${UNIT_DESC.stalker}` });
-        sub = cyber ? `Queue: ${b.queue.length}` : "Stalker needs a Cybernetics Core";
+        actions.push({ id: "train:zealot", key: "Q", label: z.label, cost: costStr(z.minerals, z.gas), disabled: p.minerals < z.minerals || p.supplyUsed + z.supply > p.supplyMax, tooltip: `${z.label} · ${costStr(z.minerals, z.gas)} · ${z.supply} supply · ${z.buildTime}s\n${UNIT_DESC.zealot}` });
+        actions.push({ id: "train:stalker", key: "W", label: k.label, cost: costStr(k.minerals, k.gas), disabled: !cyber || p.minerals < k.minerals || p.gas < k.gas || p.supplyUsed + k.supply > p.supplyMax, tooltip: `${k.label} · ${costStr(k.minerals, k.gas)} · ${k.supply} supply · ${k.buildTime}s\n${UNIT_DESC.stalker}` });
+        sub = cyber ? `Queue: ${b.queue.length}` : `${k.label} needs a Tech Lab`;
       } else if (b.type === "forge") {
         const wl = p.upgrades.groundWeapons;
         const al = p.upgrades.groundArmor;
@@ -167,7 +167,7 @@ function computeSelection(s: GameState, sel: Set<number>): {
         actions.push({ id: "research:armor", key: "W", label: al >= 3 ? "Armor MAX" : `Armor +${al + 1}`, cost: al < 3 ? `${aCost}` : undefined, disabled: al >= 3 || aResearching || p.minerals < aCost, tooltip: al >= 3 ? "Ground Armor fully upgraded (+3)." : `Ground Armor +${al + 1} · ${aCost} min — +1 armor (damage reduction) to all your units.` });
         sub = `Ground Weapons +${wl} · Armor +${al}`;
       } else if (b.type === "cybernetics") {
-        sub = "Unlocks the Stalker";
+        sub = `Unlocks the ${UNIT_STATS.stalker.label}`;
       } else if (b.type === "pylon") {
         sub = `Supply +${st.supply} · powers nearby buildings`;
       } else if (b.type === "cannon") {
@@ -181,7 +181,16 @@ function computeSelection(s: GameState, sel: Set<number>): {
       });
       if (b.rally) sub = (sub ? sub + " · " : "") + "rally set";
     }
-    return { title: st.label, sub, actions };
+    actions.push({
+      id: "demolish", key: "X", label: b.built ? "Destroy" : "Cancel", active: true, tone: "danger",
+      tooltip: b.built ? "Destroy this building (no refund)." : "Cancel construction and refund its cost.",
+    });
+    return {
+      title: st.label,
+      sub,
+      hint: b.built ? undefined : "Unfinished — right-click it with workers selected to resume building.",
+      actions,
+    };
   }
 
   return {
@@ -193,17 +202,22 @@ function computeSelection(s: GameState, sel: Set<number>): {
 
 function stateLabel(st: string): string {
   const map: Record<string, string> = {
-    mining_wall: "mining wall",
-    returning_resource: "returning cargo",
-    attack_moving: "attack-moving",
+    idle: "Idle",
+    moving: "Moving",
+    mining_wall: "Mining",
+    harvesting: "Gathering",
+    returning_resource: "Returning cargo",
+    constructing: "Building",
+    attacking: "Attacking",
+    attack_moving: "Attack-moving",
   };
   return map[st] ?? st;
 }
 
 const DIFFICULTIES: { id: Difficulty; label: string; blurb: string }[] = [
-  { id: "easy", label: "Easy", blurb: "Slow to react, few workers, one Gateway. Builds a small force and pushes late." },
-  { id: "medium", label: "Medium", blurb: "Solid macro: gas + Stalkers, upgrades, defensive cannons, steady pressure." },
-  { id: "hard", label: "Hard", blurb: "Greedy worker count, mass Gateways, full tech, and focus-fire micro. Relentless." },
+  { id: "easy", label: "Easy", blurb: "Slow to react, few workers, one Barracks. Builds a small force and pushes late." },
+  { id: "medium", label: "Medium", blurb: "Solid macro: gas + Gunners, upgrades, defensive turrets, steady pressure." },
+  { id: "hard", label: "Hard", blurb: "Greedy worker count, mass Barracks, full tech, and focus-fire micro. Relentless." },
 ];
 
 // Pre-game lobby: choose a map, how many AI opponents, and their difficulty.
@@ -309,6 +323,7 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
   const rallyModeRef = useRef(false); // click to set a building's rally point
   const placementRef = useRef<BuildingType | null>(null);
   const mouseRef = useRef({ x: 0, y: 0 });
+  const midPanRef = useRef<{ x: number; y: number } | null>(null); // middle-button screen-drag pan
   const miniDragRef = useRef(false);
   const sizeRef = useRef({ w: 0, h: 0 });
   const actionsRef = useRef<HudAction[]>([]);
@@ -365,6 +380,14 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
     if (id === "stop") {
       const ids = selectedUnitIds();
       if (ids.length) dispatch({ type: "stop", unitIds: ids });
+      return;
+    }
+    if (id === "demolish") {
+      const b = selectedBuilding();
+      if (b) {
+        dispatch({ type: "demolish", buildingId: b.id });
+        selectedRef.current = new Set();
+      }
       return;
     }
     if (id === "areaMine") {
@@ -485,6 +508,18 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
         if (b) dispatch({ type: "setRally", buildingId: b.id, tx, ty });
         return;
       }
+      // Right-click a friendly building still under construction → send workers to help finish it.
+      const underBuild = state.buildings.find(
+        (bb) => bb.owner === LOCAL_PLAYER && !bb.built && wx >= bb.tx && wx < bb.tx + bb.w && wy >= bb.ty && wy < bb.ty + bb.h
+      );
+      if (underBuild) {
+        const ws = selectedWorkerIds();
+        if (ws.length) {
+          dispatch({ type: "assistBuild", unitIds: ws, buildingId: underBuild.id });
+          pushMarker(underBuild.tx + underBuild.w / 2, underBuild.ty + underBuild.h / 2, "move");
+          return;
+        }
+      }
       const enemy = pickEnemyAt(wx, wy);
       if (enemy !== null) {
         dispatch({ type: "attack", unitIds: ids, targetId: enemy });
@@ -588,11 +623,19 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
         }
         attackModeRef.current = false;
         issueRightClick(x, y);
+      } else if (e.button === 1) {
+        e.preventDefault(); // middle button → grab-drag the camera
+        midPanRef.current = { x, y };
       }
     };
     const onMouseMove = (e: MouseEvent) => {
       const { x, y } = canvasXY(e);
       mouseRef.current = { x, y };
+      const mp = midPanRef.current;
+      if (mp) {
+        cam.pan((mp.x - x) / cam.scale, (mp.y - y) / cam.scale, MAP_W, MAP_H, sizeRef.current.w, sizeRef.current.h);
+        midPanRef.current = { x, y };
+      }
       const wx = cam.screenToWorldX(x);
       const wy = cam.screenToWorldY(y);
       const hb = state.buildings.find((b) => wx >= b.tx && wx < b.tx + b.w && wy >= b.ty && wy < b.ty + b.h);
@@ -609,6 +652,10 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
       }
     };
     const onMouseUp = (e: MouseEvent) => {
+      if (e.button === 1) {
+        midPanRef.current = null;
+        return;
+      }
       if (e.button !== 0) return;
       const d = dragRef.current;
       if (!d?.active) return;
@@ -744,6 +791,7 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
 
     // The contextual action cursor (mine/build/attack/move/…) from the current mode + hover.
     const computeCursor = (): CursorKind => {
+      if (midPanRef.current) return "pan";
       if (placementRef.current) {
         const t = placementTile();
         return t && canPlaceBuilding(state, LOCAL_PLAYER, placementRef.current, t.tx, t.ty) && selectedWorkerIds().length > 0
@@ -759,8 +807,8 @@ function Game({ setup, onRestart, onMenu }: { setup: MatchSetup; onRestart: () =
       if (selectedUnitIds().length > 0) {
         if (pickEnemyAt(wx, wy) !== null) return "attack";
         const t = getTile(state.grid, tx, ty);
+        // Only show a special cursor for mineable rock/resources; plain floor uses the default.
         if (selectedWorkerIds().length > 0 && (t === TileType.ROCK || t === TileType.MINERAL || t === TileType.GEYSER)) return "mine";
-        if (t === TileType.FLOOR) return "move";
       }
       return "default";
     };
