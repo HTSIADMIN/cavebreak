@@ -1,5 +1,6 @@
 import {
   BUILDING_STATS,
+  COLLISION_RADIUS,
   GAS_GATHER_TIME_S,
   GAS_PER_TRIP,
   GOLDEN_GAS_PER_TRIP,
@@ -1598,10 +1599,65 @@ function runAI(s: GameState, owner: PlayerId, _dt: number) {
   }
 }
 
+// --- collision -----------------------------------------------------------
+
+// Per-state collision radius (docs/combat.md): workers are tiny (mining crews pass through),
+// fighters shrink to ~half a tile (slip past in a 1-wide tunnel), other combat units space out.
+function collisionRadius(u: Unit): number {
+  if (u.type === "worker") return COLLISION_RADIUS.worker;
+  if (u.state === "attacking" || u.state === "attack_moving") return COLLISION_RADIUS.fighting;
+  return COLLISION_RADIUS.combat;
+}
+
+// A unit's center may only sit on walkable floor that isn't under a building (hard collision).
+function posWalkable(s: GameState, x: number, y: number): boolean {
+  const tx = Math.floor(x);
+  const ty = Math.floor(y);
+  return isWalkable(s.grid, tx, ty) && !tileOccupiedByBuilding(s, tx, ty);
+}
+
+// Apply a separation nudge per-axis, rejecting any component that would cross into a wall or a
+// building footprint — so units slide along solid edges instead of phasing through them.
+function nudge(s: GameState, u: Unit, dx: number, dy: number) {
+  if (dx !== 0 && posWalkable(s, u.x + dx, u.y)) u.x += dx;
+  if (dy !== 0 && posWalkable(s, u.x, u.y + dy)) u.y += dy;
+}
+
+// Soft unit-vs-unit separation: overlapping pairs push apart (half each), clamped to floor.
+// One relaxation pass per tick is enough — crowds settle over a few ticks.
+function resolveCollisions(s: GameState) {
+  const us = s.units;
+  for (let i = 0; i < us.length; i++) {
+    const a = us[i];
+    const ra = collisionRadius(a);
+    for (let j = i + 1; j < us.length; j++) {
+      const b = us[j];
+      const minD = ra + collisionRadius(b);
+      let dx = b.x - a.x;
+      let dy = b.y - a.y;
+      let d2 = dx * dx + dy * dy;
+      if (d2 >= minD * minD) continue;
+      if (d2 < 1e-6) {
+        // Exactly stacked — separate deterministically (stable across clients).
+        dx = a.id < b.id ? 0.01 : -0.01;
+        dy = 0;
+        d2 = dx * dx + dy * dy;
+      }
+      const d = Math.sqrt(d2);
+      const push = (minD - d) * 0.5;
+      const nx = (dx / d) * push;
+      const ny = (dy / d) * push;
+      nudge(s, a, -nx, -ny);
+      nudge(s, b, nx, ny);
+    }
+  }
+}
+
 // --- public API ----------------------------------------------------------
 
 export function step(s: GameState, dt: number): void {
   for (const u of s.units) updateUnit(s, u, dt);
+  resolveCollisions(s);
   updateConstruction(s, dt);
   updateProduction(s, dt);
   updateResearch(s, dt);

@@ -29,6 +29,7 @@
 | Wall mine time (per `ROCK` tile) | **Worker 10 s · Zealot 5 s · Stalker 3 s** | Per-unit `UNIT_STATS.wallMineTime`; combat units dig faster. **Cooperative** — every adjacent miner adds its rate, so a wall breaks proportionally faster. |
 | Wall clear mineral bonus | **5** | Trickle on clearing a wall (`WALL_CLEAR_MINERAL_BONUS`). |
 | Build crew cap | **4** (`MAX_BUILDERS`) | Workers are tied up while building; extra builders stack (cooperative) up to this cap. 1 worker = full `buildTime`; N workers ≈ `buildTime / min(N, 4)`. |
+| Collision radius | **Miner 0.12 · combat 0.38 · fighting 0.25** (`COLLISION_RADIUS`) | Soft unit separation (hard vs walls/structures). Miners pass through each other; fighters shrink to ~half a tile to slip past in 1-wide tunnels. See [combat.md](./combat.md). |
 | Starting pocket | **4×4** (`START_POCKET_RADIUS` 1) | 1-tile ring around a centered 2×2 Nexus; you start nearly walled in. |
 | Starting resources | **none — findable only** | Scattered in rock; some a short dig from each base, golden further out. |
 | Golden minerals | 8 / trip · 2,500 total | High-yield (SC2 "rich minerals"). Normal: 5/trip · 1,500. |
